@@ -1,0 +1,99 @@
+{
+  "name": "trinet-ai-smart-assist",
+  "displayName": "TrishAI",
+  "description": "An AI chat Agent which works on optimizing the queries for a trinet employee so that Trinet Employees can achieve increased productivity at reduced token cost",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.134.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "trishAI-sidebar",
+          "title": "TrishAI Context Tracker",
+          "icon": "$(book)"
+        }
+      ]
+    },
+    "views": {
+      "trishAI-sidebar": [
+        {
+          "id": "trishAICoverageView",
+          "name": "Codebase AI Coverage",
+          "icon": "$(book)"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "trinet-ai-smart-assist.helloWorld",
+        "title": "Hello World"
+      },
+      {
+        "command": "trishAI.generateSkeleton",
+        "title": "Generate AST Skeleton",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "trishAICoverageView.refresh",
+        "title": "Refresh Coverage",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "trishAI.generateSkeleton",
+          "when": "view == trishAICoverageView && (viewItem == codeFolder || viewItem == codeFile)",
+          "group": "inline"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "trishAICoverageView.refresh",
+          "when": "view == trishAICoverageView",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.134.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "typescript-eslint": "^8.61.1",
+    "eslint": "^10.5.0",
+    "esbuild": "^0.28.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^6.0.3",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0"
+  },
+  "dependencies": {
+    "typescript": "^5.0.0"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  }
+}
