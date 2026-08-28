@@ -1,0 +1,16 @@
+{
+  "name": "Ubuntu 26.04 Cutting Edge Workspace",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-26.04",
+  "features": {
+  },
+  "postCreateCommand": "git clone https://github.com/ahemed-haneen/terminal-profile.git && cd terminal-profile/for\\ GH\\ codespace/ && ./install_powerline.sh && ./install_profile.sh && cd ../..  && rm -rf terminal-profile",
+  "forwardPorts": [3000, 5432],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint",
+      ]
+    }
+  }
+}
