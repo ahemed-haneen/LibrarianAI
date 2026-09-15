@@ -87,31 +87,25 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
     return false;
   }
 
-  private hasSkeletonFile(fullFilePath: string): boolean {
-    if (!this.workspaceRoot) return false;
-    const relative = path.relative(this.workspaceRoot, fullFilePath);
-    const skeletonPath = path.join(
-      this.workspaceRoot,
+  private getSkeletonPath(fullFilePath: string): string {
+    const relative = path.relative(this.workspaceRoot!, fullFilePath);
+    return path.join(
+      this.workspaceRoot!,
       '.trishAI',
       path.dirname(relative),
       `${path.basename(fullFilePath)}.skeleton.md`
     );
-    return fs.existsSync(skeletonPath);
+  }
+
+  private hasSkeletonFile(fullFilePath: string): boolean {
+    if (!this.workspaceRoot) return false;
+    return fs.existsSync(this.getSkeletonPath(fullFilePath));
   }
 
   private getSkeletonMtime(fullFilePath: string): number | null {
     if (!this.workspaceRoot) return null;
-    const relative = path.relative(this.workspaceRoot, fullFilePath);
-    const skeletonPath = path.join(
-      this.workspaceRoot,
-      '.trishAI',
-      path.dirname(relative),
-      `${path.basename(fullFilePath)}.skeleton.md`
-    );
-    if (fs.existsSync(skeletonPath)) {
-      return fs.statSync(skeletonPath).mtimeMs;
-    }
-    return null;
+    const skeletonPath = this.getSkeletonPath(fullFilePath);
+    return fs.existsSync(skeletonPath) ? fs.statSync(skeletonPath).mtimeMs : null;
   }
 
   async getChildren(element?: CoverageNode): Promise<CoverageNode[]> {
@@ -216,14 +210,17 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
             false,
             true
           );
-          node.contextValue = 'codeFile';
 
           if (isIndexed) {
+            node.contextValue = 'codeFileIndexed';
             node.iconPath = new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.green'));
             node.description = `Skeleton Ready${timeDesc}`;
+            node.tooltip = 'Skeleton indexed — click ↻ to regenerate';
           } else {
+            node.contextValue = 'codeFile';
             node.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
             node.description = 'Unmapped';
+            node.tooltip = 'Not yet indexed — click ⚡ to generate skeleton';
           }
 
           nodes.push(node);

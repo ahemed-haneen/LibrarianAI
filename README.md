@@ -1,71 +1,70 @@
-# trinet-ai-smart-assist README
+# TrishAI — VS Code Extension
 
-This is the README for your extension "trinet-ai-smart-assist". After writing up a brief description, we recommend including the following sections.
+A VS Code extension that helps TriNet employees work more productively with AI tools by generating and tracking **AST skeleton files** for their TypeScript/JavaScript codebase. The goal is to feed AI agents a compact, structured representation of a codebase's public API rather than full source files — reducing token costs while keeping context meaningful.
 
-## Features
+## What it does
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+### Codebase AI Coverage Tracker
+A sidebar tree view (activity bar) shows every `.ts/.tsx/.js/.jsx` file in your workspace and whether it has been **indexed** (i.e., has a generated skeleton). The root of the tree displays an **AI Readiness** percentage — the share of files that have been mapped — with a colour-coded icon (green > 75%, yellow > 25%, orange otherwise).
 
-For example if there is an image subfolder under your extension project workspace:
+### AST Skeleton Generation
+Right-clicking any file or folder in the tree and selecting **Generate AST Skeleton** (⚡) triggers `AstGenerator`, which:
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Parses the file(s) with the TypeScript compiler API (`ts.createSourceFile`).
+2. Walks the top-level AST and extracts only **exported** declarations:
+   - Functions → `export function name(params): returnType;`
+   - Classes → class shell with method and property signatures
+   - Interfaces → full member list
+   - Type aliases → `export type Name = ...;`
+3. Writes a `.skeleton.md` file into a `.trishAI/` mirror directory inside the workspace root (e.g. `src/foo.ts` → `.trishAI/src/foo.ts.skeleton.md`).
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+The skeletons are lightweight markdown code blocks — just the public contract of each file, with no implementation details.
 
-## Requirements
+## Project structure
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+```
+src/
+  extension.ts           — activation, command registration
+  astGenerator.ts        — TypeScript AST parsing & skeleton file writer
+  coverageTreeProvider.ts — VS Code TreeDataProvider for the sidebar view
+```
 
-## Extension Settings
+## Commands
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+| Command | Description |
+|---|---|
+| `trishAI.generateSkeleton` | Generate AST skeleton for a file or folder |
+| `trishAICoverageView.refresh` | Re-scan the workspace and refresh the tree |
+| `trinet-ai-smart-assist.helloWorld` | Smoke-test command |
 
-For example:
+## Output format
 
-This extension contributes the following settings:
+Skeletons are stored under `.trishAI/` at the workspace root (excluded from the tree view itself). Each file looks like:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+```markdown
+# Skeleton: `src/myModule.ts`
+*Generated: 2025-01-01T00:00:00.000Z*
 
-## Known Issues
+\`\`\`typescript
+export function doThing(input: string): boolean;
+export class MyService {
+  someMethod(id: number): Promise<void>;
+  name: string;
+}
+export interface Config {
+  timeout: number;
+  retries: number;
+}
+\`\`\`
+```
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+## Development
 
-## Release Notes
+```bash
+pnpm install
+pnpm run compile   # type-check + lint + bundle
+pnpm run watch     # watch mode (esbuild + tsc)
+pnpm test          # run extension tests
+```
 
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+Requires VS Code `^1.134.0`. Built with TypeScript 6, bundled with esbuild.

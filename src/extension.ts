@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { CoverageNode, CoverageTreeProvider } from './coverageTreeProvider';
 import { AstGenerator } from './astGenerator';
+import { LibrarianPanel } from './librarianPanel';
 
 export function activate(context: vscode.ExtensionContext) {
     const rootPath =
@@ -20,7 +21,7 @@ export function activate(context: vscode.ExtensionContext) {
         coverageTreeProvider.refresh();
     });
 
-    const generateSkeletonCmd = vscode.commands.registerCommand('trishAI.generateSkeleton', async (node: CoverageNode) => {
+    const runGenerateSkeleton = async (node: CoverageNode) => {
         if (!rootPath || !node.fsPath) {
             vscode.window.showWarningMessage('No folder or file selected.');
             return;
@@ -37,9 +38,20 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         coverageTreeProvider.refresh();
+    };
+
+    const generateSkeletonCmd = vscode.commands.registerCommand('trishAI.generateSkeleton', runGenerateSkeleton);
+    const updateSkeletonCmd = vscode.commands.registerCommand('trishAI.updateSkeleton', runGenerateSkeleton);
+
+    const askLibrarianCmd = vscode.commands.registerCommand('trishAI.askLibrarian', () => {
+        if (!rootPath) {
+            vscode.window.showWarningMessage('No workspace folder open.');
+            return;
+        }
+        LibrarianPanel.show(context, rootPath);
     });
 
-    context.subscriptions.push(helloWorldCmd, refreshCmd, generateSkeletonCmd);
+    context.subscriptions.push(helloWorldCmd, refreshCmd, generateSkeletonCmd, updateSkeletonCmd, askLibrarianCmd);
 }
 
 export function deactivate() {}

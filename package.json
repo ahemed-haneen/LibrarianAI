@@ -41,22 +41,47 @@
         "icon": "$(zap)"
       },
       {
+        "command": "trishAI.updateSkeleton",
+        "title": "Regenerate AST Skeleton",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "trishAICoverageView.refresh",
         "title": "Refresh Coverage",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "trishAI.askLibrarian",
+        "title": "Ask Librarian",
+        "icon": "$(wand)"
       }
     ],
     "menus": {
       "view/item/context": [
         {
           "command": "trishAI.generateSkeleton",
-          "when": "view == trishAICoverageView && (viewItem == codeFolder || viewItem == codeFile)",
+          "when": "view == trishAICoverageView && viewItem == codeFile",
+          "group": "inline"
+        },
+        {
+          "command": "trishAI.updateSkeleton",
+          "when": "view == trishAICoverageView && viewItem == codeFileIndexed",
+          "group": "inline"
+        },
+        {
+          "command": "trishAI.generateSkeleton",
+          "when": "view == trishAICoverageView && viewItem == codeFolder",
           "group": "inline"
         }
       ],
       "view/title": [
         {
           "command": "trishAICoverageView.refresh",
+          "when": "view == trishAICoverageView",
+          "group": "navigation"
+        },
+        {
+          "command": "trishAI.askLibrarian",
           "when": "view == trishAICoverageView",
           "group": "navigation"
         }
@@ -89,9 +114,7 @@
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0"
   },
-  "dependencies": {
-    "typescript": "^5.0.0"
-  },
+  "dependencies": {},
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"

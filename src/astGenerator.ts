@@ -67,6 +67,10 @@ export class AstGenerator {
           signatures.push('}');
         } else if (ts.isTypeAliasDeclaration(node)) {
           signatures.push(`export type ${node.name.text} = ${node.type.getText(sourceFile)};`);
+        } else if (ts.isEnumDeclaration(node)) {
+          signatures.push(`export enum ${node.name.text} {`);
+          node.members.forEach((m) => signatures.push(`  ${m.getText(sourceFile)},`));
+          signatures.push('}');
         } else if (ts.isClassDeclaration(node) && node.name) {
           signatures.push(`export class ${node.name.text} {`);
           node.members.forEach((m) => {
@@ -80,6 +84,13 @@ export class AstGenerator {
             }
           });
           signatures.push('}');
+        } else if (ts.isVariableStatement(node)) {
+          node.declarationList.declarations.forEach((decl) => {
+            if (ts.isIdentifier(decl.name)) {
+              const type = decl.type ? decl.type.getText(sourceFile) : 'any';
+              signatures.push(`export const ${decl.name.text}: ${type};`);
+            }
+          });
         }
       }
     });
