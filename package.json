@@ -56,6 +56,36 @@
         "icon": "$(wand)"
       }
     ],
+    "configuration": {
+      "title": "TrishAI",
+      "properties": {
+        "trishAI.aiProvider": {
+          "type": "string",
+          "enum": ["copilot", "anthropic"],
+          "enumDescriptions": [
+            "Use the GitHub Copilot language model already active in this VS Code installation (no separate API key needed).",
+            "Call Anthropic directly — requires an API key set in trishAI.anthropicApiKey."
+          ],
+          "default": "copilot",
+          "description": "AI provider used to generate context summaries for source files."
+        },
+        "trishAI.copilotModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Copilot model family to prefer when `#trishAI.aiProvider#` is `copilot`. Examples: `gpt-4o`, `gpt-4o-mini`, `claude-3.5-sonnet`, `o3-mini`. Leave empty to use the best model VS Code selects automatically."
+        },
+        "trishAI.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Anthropic API key used when `#trishAI.aiProvider#` is `anthropic`. Get one at https://console.anthropic.com/."
+        },
+        "trishAI.anthropicModel": {
+          "type": "string",
+          "default": "claude-haiku-4-5-20251001",
+          "markdownDescription": "Anthropic model ID used when `#trishAI.aiProvider#` is `anthropic`. Examples: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-8`."
+        }
+      }
+    },
     "menus": {
       "view/item/context": [
         {
@@ -114,7 +144,9 @@
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0"
+  },
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"

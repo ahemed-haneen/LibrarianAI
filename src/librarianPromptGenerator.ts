@@ -4,6 +4,7 @@ import * as path from 'path';
 interface SkeletonEntry {
   relativePath: string;
   content: string;
+  contextSummary?: string;
   score: number;
 }
 
@@ -81,7 +82,18 @@ export class LibrarianPromptGenerator {
       const content = fs.readFileSync(filePath, 'utf8');
       // .trishAI/src/foo.ts.skeleton.md  →  src/foo.ts
       const rel = path.relative(trishAIDir, filePath).replace(/\.skeleton\.md$/, '');
-      entries.push({ relativePath: rel, content, score: 0 });
+
+      // Load matching context file if it exists
+      const contextPath = filePath.replace(/\.skeleton\.md$/, '.context.md');
+      let contextSummary: string | undefined;
+      if (fs.existsSync(contextPath)) {
+        const raw = fs.readFileSync(contextPath, 'utf8');
+        // Strip the header lines (title + generated date) — keep just the body
+        const bodyMatch = raw.match(/\*Generated:.*?\*\n+([\s\S]+)/);
+        contextSummary = bodyMatch ? bodyMatch[1].trim() : raw.trim();
+      }
+
+      entries.push({ relativePath: rel, content, contextSummary, score: 0 });
     });
     return entries;
   }
@@ -183,6 +195,12 @@ export class LibrarianPromptGenerator {
       for (const s of relevant) {
         lines.push(`### \`${s.relativePath}\``);
         lines.push('');
+        if (s.contextSummary) {
+          lines.push(s.contextSummary);
+          lines.push('');
+          lines.push('**Signature skeleton:**');
+          lines.push('');
+        }
         const block = this.extractTypeScriptBlock(s.content);
         lines.push('```typescript');
         lines.push(block);

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ContextGenerator } from './contextGenerator';
 
 export class CoverageNode extends vscode.TreeItem {
   constructor(
@@ -108,6 +109,11 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
     return fs.existsSync(skeletonPath) ? fs.statSync(skeletonPath).mtimeMs : null;
   }
 
+  private hasContextFile(fullFilePath: string): boolean {
+    if (!this.workspaceRoot) return false;
+    return fs.existsSync(ContextGenerator.getContextPath(this.workspaceRoot, fullFilePath));
+  }
+
   async getChildren(element?: CoverageNode): Promise<CoverageNode[]> {
     if (!this.workspaceRoot) {
       return [new CoverageNode('No workspace open', vscode.TreeItemCollapsibleState.None)];
@@ -200,6 +206,7 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
           !entry.name.endsWith('.d.ts')
         ) {
           const isIndexed = this.hasSkeletonFile(fullPath);
+          const hasContext = this.hasContextFile(fullPath);
           const mtime = this.getSkeletonMtime(fullPath);
           const timeDesc = mtime ? ` • ${new Date(mtime).toLocaleDateString()}` : '';
 
@@ -211,16 +218,21 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
             true
           );
 
-          if (isIndexed) {
+          if (isIndexed && hasContext) {
             node.contextValue = 'codeFileIndexed';
             node.iconPath = new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.green'));
+            node.description = `Skeleton + Context${timeDesc}`;
+            node.tooltip = 'Skeleton & context indexed — click ↻ to regenerate';
+          } else if (isIndexed) {
+            node.contextValue = 'codeFileIndexed';
+            node.iconPath = new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.yellow'));
             node.description = `Skeleton Ready${timeDesc}`;
-            node.tooltip = 'Skeleton indexed — click ↻ to regenerate';
+            node.tooltip = 'Skeleton indexed (no context yet) — click ↻ to regenerate both';
           } else {
             node.contextValue = 'codeFile';
             node.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
             node.description = 'Unmapped';
-            node.tooltip = 'Not yet indexed — click ⚡ to generate skeleton';
+            node.tooltip = 'Not yet indexed — click ⚡ to generate skeleton & context';
           }
 
           nodes.push(node);
