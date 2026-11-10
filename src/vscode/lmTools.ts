@@ -13,8 +13,12 @@ export function registerLmTools(lib: () => Librarian | undefined, tracker: () =>
     vscode.lm.registerTool<Record<string, unknown>>(def.name, {
       prepareInvocation(options) {
         const input = options.input;
-        const detail = typeof input.task === 'string' ? input.task : typeof input.path === 'string' ? input.path : Array.isArray(input.paths) ? input.paths.join(', ') : '';
-        return { invocationMessage: `Librarian: ${def.name.replace('librarian_', '')} ${detail.slice(0, 80)}` };
+        const detail = typeof input.task === 'string' ? input.task : typeof input.title === 'string' ? input.title : typeof input.query === 'string' ? input.query : typeof input.path === 'string' ? input.path : Array.isArray(input.paths) ? input.paths.join(', ') : '';
+        const confirm = def.confirm?.(input);
+        return {
+          invocationMessage: `Librarian: ${def.name.replace('librarian_', '')} ${detail.slice(0, 80)}`,
+          confirmationMessages: confirm ? { title: confirm.title, message: new vscode.MarkdownString(confirm.message) } : undefined,
+        };
       },
       invoke(options) {
         const l = lib();

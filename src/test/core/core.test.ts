@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -9,6 +10,8 @@ import { IndexView } from '../../core/indexStore';
 import { runIndex } from '../../core/indexer';
 import { Librarian } from '../../core/librarian';
 import { LlmClient } from '../../core/llm';
+import { costHint } from '../../core/modelHints';
+import { estimateSavings } from '../../core/savings';
 import { isSourcePath } from '../../core/sourceFiles';
 import { TOOL_DEFS } from '../../core/tools';
 import { tokenize } from '../../core/util';
@@ -246,5 +249,111 @@ describe('package.json contributions', () => {
     for (const t of pkg.contributes.languageModelTools as { toolReferenceName: string }[]) {
       assert.ok(INSTRUCTIONS_BLOCK.includes(`#${t.toolReferenceName}`), t.toolReferenceName);
     }
+  });
+});
+
+describe('model cost hints', () => {
+  test('flags cheap and premium families, never guesses confidently otherwise', () => {
+    for (const f of ['gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-5-mini', 'claude-haiku-4.5', 'gemini-2.0-flash', 'o3-mini']) {
+      assert.strictEqual(costHint(f), 'low', f);
+    }
+    for (const f of ['gpt-5', 'gpt-5.1', 'claude-sonnet-4.5', 'claude-opus-4.1', 'o3', 'gemini-2.5-pro']) {
+      assert.strictEqual(costHint(f), 'premium', f);
+    }
+    assert.strictEqual(costHint('some-new-model'), 'unknown');
+  });
+});
+
+describe('savings estimate', () => {
+  test('replays git history leave-one-out and reports savings and recall', async () => {
+    const filler = (name: string) =>
+      Array.from({ length: 60 }, (_, i) => `function ${name}Helper${i}(x: number): number { return x * ${i} + ${i}; }`).join('\n');
+    const root = tmpRepo({
+      'src/billing/invoice.ts': `import { computeVat } from './tax';\n/** Builds invoices for customers. */\nexport function createInvoice(customerId: string): Invoice { return {} as Invoice; }\n${filler('inv')}`,
+      'src/billing/tax.ts': `/** VAT and sales tax rules. */\nexport function computeVat(amount: number, country: string): number { return amount; }\n${filler('tax')}`,
+      'src/http/routes.ts': `import { createInvoice } from '../billing/invoice';\nexport function registerRoutes(app: App): void {}\n${filler('routes')}`,
+      'src/ui/button.ts': `export function Button(label: string): Element { return null as any; }\n${filler('btn')}`,
+      'src/ui/theme.ts': `export const theme = { primary: 'blue' };\n${filler('theme')}`,
+    });
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+    git('init', '-q');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'initial import');
+    fs.appendFileSync(path.join(root, 'src/billing/tax.ts'), '\nexport const EU_VAT = 0.2;');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'Add EU VAT rate to tax computation');
+    fs.appendFileSync(path.join(root, 'src/ui/button.ts'), '\nexport const BUTTON_SIZE = 3;');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'Make the button bigger');
+
+    await runIndex({ root, layer: 'local' });
+    const lib = new Librarian(root);
+    const before = lib.view.layers.local.stats().promptsBuilt;
+    const r = await estimateSavings(lib, { commits: 10, costPerMillionTokens: 3 });
+
+    assert.ok(r.cases.length >= 2, `cases: ${r.cases.length}`);
+    const vat = r.cases.find((c) => c.task.includes('EU VAT'))!;
+    assert.deepStrictEqual(vat.found, ['src/billing/tax.ts']);
+    assert.ok(vat.withLibrarian < vat.without, 'pack is cheaper than exploring neighbours');
+    assert.ok(r.totals.recall > 0);
+    assert.match(r.markdown, /Context tokens per task/);
+    assert.match(r.markdown, /per 1,000 tasks/);
+    assert.match(r.markdown, /How this is calculated/);
+    assert.strictEqual(lib.view.layers.local.stats().promptsBuilt, before, 'estimates do not pollute usage stats');
+  });
+});
+
+describe('saved notes (chat context memory)', () => {
+  test('save, update by title, search, and stay out of task memory', async () => {
+    const root = tmpRepo({
+      'src/auth/login.ts': `export function login(user: string, password: string): Promise<Session> { return null as any; }`,
+      'src/auth/rateLimit.ts': `export function limit(key: string): boolean { return true; }`,
+      'src/ui/button.ts': `export function Button(label: string): Element { return null as any; }`,
+    });
+    await runIndex({ root, layer: 'local' });
+    const lib = new Librarian(root);
+
+    const saveTool = TOOL_DEFS.find((t) => t.name === 'librarian_saveNote')!;
+    const out = saveTool.run(lib, {
+      title: 'Login rate limiting',
+      summary: 'Decided: 5 attempts per minute per IP using a sliding window in rateLimit.ts. Return 429 with Retry-After. Redis rejected (no infra).',
+      files: ['src/auth/rateLimit.ts', './src/auth/login.ts'],
+    });
+    assert.match(out.text, /Saved note "Login rate limiting"/);
+    assert.ok(saveTool.confirm, 'write tool asks for confirmation');
+
+    // Same title updates instead of duplicating.
+    lib.notes.save({ title: 'login rate limiting', summary: 'Update: limit raised to 10 attempts per minute.', source: 'chat' });
+    assert.strictEqual(lib.notes.all().length, 1);
+    assert.match(lib.notes.all()[0].note.summary, /10 attempts/);
+    assert.deepStrictEqual(lib.notes.all()[0].note.files, ['src/auth/rateLimit.ts', 'src/auth/login.ts']);
+
+    // Notes are knowledge, not edits.
+    assert.strictEqual(lib.memory.all().length, 0);
+    assert.ok(!fs.existsSync(path.join(root, '.trishAI/shared/notes.json')), 'personal notes stay in the git-ignored layer');
+
+    // Reused automatically in a related task, with its files boosted.
+    const pack = lib.findRelevant('tweak the login attempt limit');
+    assert.match(pack.prompt, /## Saved context from earlier chats/);
+    assert.match(pack.prompt, /10 attempts per minute/);
+    assert.ok(pack.files.some((f) => f.path === 'src/auth/rateLimit.ts' && f.reasons.some((r) => r.includes('saved note'))));
+
+    // Unrelated task: no note.
+    assert.doesNotMatch(lib.findRelevant('make the button blue').prompt, /Saved context/);
+
+    // Recall tool and sharing.
+    const recall = TOOL_DEFS.find((t) => t.name === 'librarian_recallNotes')!.run(lib, { query: 'what did we decide about rate limiting' });
+    assert.match(recall.text, /Login rate limiting/);
+    const id = lib.notes.all()[0].note.id;
+    assert.ok(lib.notes.share(id));
+    assert.strictEqual(lib.notes.all()[0].layer, 'shared');
+    assert.ok(lib.notes.remove(id));
+    assert.strictEqual(lib.notes.all().length, 0);
+  });
+
+  test('notes can be switched off', async () => {
+    const root = tmpRepo({ 'src/a.ts': `export function payInvoice(id: string): void {}` });
+    await runIndex({ root, layer: 'local' });
+    new Librarian(root).notes.save({ title: 'Invoice payments', summary: 'Use the ledger API for invoice payments.' });
+    assert.doesNotMatch(new Librarian(root, 'onApiChange', false).findRelevant('pay invoice').prompt, /Saved context/);
+    assert.match(new Librarian(root).findRelevant('pay invoice').prompt, /ledger API/);
   });
 });

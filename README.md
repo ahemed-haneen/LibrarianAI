@@ -24,11 +24,15 @@ You keep working in Copilot Chat. Librarian runs alongside it:
 ## Quick start
 
 1. Install the extension and open your repository. Skeletons build in the background (free).
-2. Run **Librarian: Install Copilot Instructions** and commit the file.
-3. Optional: **Librarian: Index Workspace** to add AI summaries. Uses your Copilot, cheapest
-   models first (`trishAI.copilotModelFamilies`).
-4. Optional: **Librarian: Learn from Recent Commits** to seed task memory from git history.
-5. Work as usual in Copilot agent mode, or ask `@librarian`.
+2. The **Librarian Setup** page opens. Choose the provider and the **exact Copilot model** for summaries.
+   Nothing is pre-selected, and no summaries run until you save.
+3. **Librarian: Estimate Token Savings** shows what your own history says you'd save.
+4. Run **Librarian: Install Copilot Instructions** and commit the file.
+5. Optional: **Librarian: Index Workspace** (AI summaries) and **Learn from Recent Commits** (task memory).
+6. Work as usual in Copilot agent mode, or ask `@librarian`. To keep a chat's context for later, say
+   *"save this to librarian memory"* (`#librarianSave`).
+
+Testing it on a real repository: **[docs/TESTING.md](docs/TESTING.md)**.
 
 For the firm-wide setup see **[docs/CI.md](docs/CI.md)**.
 
@@ -46,9 +50,13 @@ src/
     librarian.ts             the service every front end calls
     tools.ts / mcpServer.ts  tool contract + MCP stdio server
     llm.ts                   Anthropic, GitHub Models / OpenAI-compatible clients
+    savings.ts               token-savings estimate replayed on git history
+    modelHints.ts            low-cost / premium hint from a model's name
+    notes.ts                 saved chat context (personal / team)
     copilotInstructions.ts   managed block in .github/copilot-instructions.md
   vscode/
-    copilotLlm.ts            vscode.lm (your Copilot) with cheap-model preference
+    copilotLlm.ts            vscode.lm (your Copilot), only the exact model you chose
+    setupPanel.ts            first-run setup page (provider + model)
     lmTools.ts               Copilot agent-mode tools
     chatParticipant.ts       @librarian
     taskTracker.ts           links saved files to the active task

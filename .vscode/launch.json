@@ -1,10 +1,22 @@
-// A launch configuration that compiles the extension and then opens it inside a new window
-// Use IntelliSense to learn about possible attributes.
-// Hover to view descriptions of existing attributes.
-// For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+// Launch configurations for developing the extension.
+// "Run Extension" opens an empty Extension Development Host window.
+// "Run Extension on a repository" opens that window directly on the repo you want to test against.
 {
 	"version": "0.2.0",
 	"configurations": [
+		{
+			"name": "Run Extension on a repository…",
+			"type": "extensionHost",
+			"request": "launch",
+			"args": [
+				"--extensionDevelopmentPath=${workspaceFolder}",
+				"${input:testRepo}"
+			],
+			"outFiles": [
+				"${workspaceFolder}/dist/**/*.js"
+			],
+			"preLaunchTask": "${defaultBuildTask}"
+		},
 		{
 			"name": "Run Extension",
 			"type": "extensionHost",
@@ -16,6 +28,13 @@
 				"${workspaceFolder}/dist/**/*.js"
 			],
 			"preLaunchTask": "${defaultBuildTask}"
+		}
+	],
+	"inputs": [
+		{
+			"id": "testRepo",
+			"type": "promptString",
+			"description": "Absolute path of the repository to test Librarian on"
 		}
 	]
 }

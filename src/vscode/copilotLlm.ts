@@ -2,34 +2,32 @@ import * as vscode from 'vscode';
 import { LlmClient } from '../core/llm';
 
 /**
- * Uses the Copilot subscription already signed in to VS Code (vscode.lm). Background summaries
- * are simple work, so it walks a preference list of low-cost model families first — on most
- * Copilot business plans the base models do not consume premium requests.
+ * Uses the Copilot subscription already signed in to VS Code (vscode.lm), but ONLY the exact
+ * model the user chose on the setup page. There is deliberately no fallback: if that model
+ * disappears, summarising stops and asks, rather than quietly switching to another (possibly premium) model.
  */
 export class CopilotLlm implements LlmClient {
   private model?: vscode.LanguageModelChat;
 
-  constructor(private families: string[]) {}
+  constructor(private modelId: string) {}
 
   get label(): string {
-    return this.model ? `Copilot / ${this.model.family}` : 'Copilot';
+    return `Copilot / ${this.model?.name ?? this.modelId}`;
+  }
+
+  static async find(modelId: string): Promise<vscode.LanguageModelChat | undefined> {
+    const found = await vscode.lm.selectChatModels({ vendor: 'copilot', id: modelId });
+    return found[0];
   }
 
   private async pick(): Promise<vscode.LanguageModelChat> {
-    if (this.model) {
-      return this.model;
-    }
-    for (const family of this.families.filter(Boolean)) {
-      const found = await vscode.lm.selectChatModels({ vendor: 'copilot', family });
-      if (found.length) {
-        return (this.model = found[0]);
+    if (!this.model) {
+      this.model = await CopilotLlm.find(this.modelId);
+      if (!this.model) {
+        throw new Error(`The Copilot model you chose ("${this.modelId}") is not available right now. Run "Librarian: Open Setup" to choose another.`);
       }
     }
-    const any = await vscode.lm.selectChatModels({ vendor: 'copilot' });
-    if (!any.length) {
-      throw new Error('No Copilot language model is available. Make sure GitHub Copilot is installed and signed in.');
-    }
-    return (this.model = any[0]);
+    return this.model;
   }
 
   async complete(prompt: string, signal?: AbortSignal): Promise<string> {
