@@ -3,7 +3,7 @@ import { ContextPolicy, IndexView } from './indexStore';
 import { stripFence } from './indexer';
 import { buildPrompt, BuiltPrompt, markFreshness, retrieve, SearchIndex } from './retrieval';
 import { listSourceFiles } from './sourceFiles';
-import { TaskMemory } from './taskMemory';
+import { TaskMemory, TaskRecord } from './taskMemory';
 import { absFromRel, hashText } from './util';
 
 export interface FindOptions {
@@ -11,6 +11,9 @@ export interface FindOptions {
   maxFiles?: number;
   /** Record this as a task so later edits teach the memory. */
   remember?: boolean;
+  /** Count this pack in the usage stats (default true; off for estimates). */
+  track?: boolean;
+  memoryFilter?: (t: TaskRecord) => boolean;
 }
 
 export interface FindResult extends BuiltPrompt {
@@ -33,11 +36,12 @@ export class Librarian {
   }
 
   findRelevant(task: string, opts: FindOptions = {}): FindResult {
-    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles });
+    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles, memoryFilter: opts.memoryFilter });
     markFreshness(this.root, this.view, cands);
     const built = buildPrompt(this.view, task, cands, this.search.size, opts.budget);
-    const local = this.view.layers.local;
-    local.bumpStats({ promptsBuilt: 1, estTokensDelivered: built.deliveredTokens, estTokensIfFullFiles: built.fullFileTokens });
+    if (opts.track !== false) {
+      this.view.layers.local.bumpStats({ promptsBuilt: 1, estTokensDelivered: built.deliveredTokens, estTokensIfFullFiles: built.fullFileTokens });
+    }
     const taskId = opts.remember ? this.memory.begin(task, cands.map((c) => c.path)) : undefined;
     return { ...built, taskId };
   }
@@ -55,6 +59,13 @@ export class Librarian {
         return `### \`${p}\`${flag}\n${ctx ? ctx + '\n\n' : ''}\`\`\`typescript\n${stripFence(this.view.readSkeleton(e) ?? '')}\n\`\`\`\n`;
       })
       .join('\n');
+  }
+
+  /** Direct imports and importers of a file (root-relative paths). */
+  neighbours(p: string): string[] {
+    this.search.ensure();
+    const e = this.view.resolve(p);
+    return [...new Set([...(e?.record.imports ?? []), ...this.search.importersOf(p)])];
   }
 
   getRelated(p: string): string {

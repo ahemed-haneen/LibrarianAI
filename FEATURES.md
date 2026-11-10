@@ -17,6 +17,8 @@ it gets better at picking files the more you use it.
 | AI summaries | ~150-word "what / responsibilities / use when / gotchas" per file | Once per API change |
 | Retrieval | Ranks files for a task: BM25 + names + graph + task memory | Free |
 | Task memory | Learns which files you actually change for which kind of task | Free |
+| Setup page | Choose provider and exact model; nothing runs until you save | Free |
+| Savings estimate | Replays your own history to measure tokens saved and recall | Free |
 | Copilot tools | `#librarianFind`, `#librarianSkeleton`, `#librarianRelated` in agent mode | Free (the tool itself) |
 | `@librarian` | Chat participant using your selected Copilot model with a compact pack | One normal chat request |
 | Context packs | Budgeted prompt you can paste into any AI | Free |
@@ -95,6 +97,27 @@ it gets better at picking files the more you use it.
   extension, no VS Code needed.
 - `librarian mcp` exposes the three tools over the Model Context Protocol (stdio).
 
+### Setup: you choose the model
+- On first run a **Librarian Setup** page opens. Pick the provider (firm's Copilot, Anthropic, or no AI)
+  and, for Copilot, the **exact model**, from the models your Copilot actually offers.
+- Each model shows a **name-based hint** (*usually low-cost* / *usually premium* / *check your plan*).
+  VS Code doesn't expose premium-request multipliers, so treat it as a hint and confirm against your plan.
+- **Nothing is pre-selected and nothing is auto-picked.** Until you save, only free skeletons are built.
+  If your chosen model disappears, summarising stops and asks you. It never falls back to another model.
+- Your `@librarian` chats always use the model you select in the chat window.
+
+### Measuring savings
+- **Librarian: Estimate Token Savings** (or click *Est. tokens saved* in the sidebar, or
+  `librarian estimate` in a terminal or CI) replays your repository's recent merged commits, plus your recorded
+  sessions, as if each task were asked again. It never lets a task learn from itself (*leave-one-out*).
+- For each task it compares:
+  - **Without Librarian:** reading the files that were changed plus their imports and importers (a conservative stand-in for exploration).
+  - **With Librarian:** the context pack, plus reading the changed files (you still edit them), plus exploration for any file the pack missed.
+- The report shows average and median tokens saved per task, **recall** (how many of the actually changed
+  files the pack found), full-hit rate, a per-task table, and an optional $ figure.
+- In VS Code it counts with **your chosen model's own tokenizer** (no chat request is made). Otherwise it uses a ~4 chars/token estimate.
+- Not counted: fewer back-and-forth turns, which is often the larger saving on request-metered plans. Small repositories show small savings.
+
 ### Visibility
 - Sidebar **AI Readiness %** counts only *fresh* entries; per-folder `ready/total`.
 - Per-file state: **Skeleton + Summary**, **Skeleton**, **Stale**, **Unmapped**.
@@ -110,7 +133,7 @@ it gets better at picking files the more you use it.
 |---|---|---|
 | 1 | **Content-hash incremental indexing** | Unchanged files are never re-parsed or re-summarised. Re-running "Index Workspace" costs nothing. |
 | 2 | **Summaries refresh on API change only** (default `onApiChange`) | Editing a function body updates the free skeleton but keeps the paid summary. Switch to `onSourceChange` if you prefer. |
-| 3 | **Cheap models first** for background work | `copilotModelFamilies` is tried in order. Put your plan's non-premium models first, and keep premium requests for real tasks. |
+| 3 | **You choose the summary model, explicitly** | The setup page lists your Copilot models with a low-cost/premium hint. Nothing is pre-selected, nothing is auto-picked, and there is no fallback to another model, so premium requests are never spent behind your back. |
 | 4 | **Skeleton-first, free by default** | Startup and on-save indexing never call a model. Summaries run only when you ask. |
 | 5 | **Shared CI index** | One summary per changed API for the whole firm, instead of one per developer. |
 | 6 | **Layer reuse** | A fresh shared entry means no local work at all. Local edits only touch your overlay. |
@@ -146,7 +169,7 @@ what your firm's plan actually meters.
 | Setting | Default | Purpose |
 |---|---|---|
 | `trishAI.aiProvider` | `copilot` | `copilot`, `anthropic` or `none` |
-| `trishAI.copilotModelFamilies` | `gpt-4.1, gpt-5-mini, gpt-4o-mini, gpt-4o` | Preference order for background summaries |
+| `trishAI.copilotModel` | *(empty)* | Exact Copilot model id for summaries, set via **Open Setup**. Empty means no summaries. |
 | `trishAI.anthropicModel` | `claude-haiku-5-5` | Model when the provider is `anthropic` |
 | `trishAI.contextRefreshPolicy` | `onApiChange` | When summaries go stale |
 | `trishAI.autoUpdateSkeletons` | `true` | Re-extract on save (free) |
@@ -156,6 +179,7 @@ what your firm's plan actually meters.
 | `trishAI.concurrency` | `2` | Parallel summary requests |
 | `trishAI.writeLayer` | `local` | `local` overlay, or `shared` if you maintain the index without CI |
 | `trishAI.learning.enabled` | `true` | Record edits after Librarian requests |
+| `trishAI.costPerMillionTokens` | `0` | Optional price for an indicative cost in the savings estimate |
 
 ---
 
@@ -163,6 +187,8 @@ what your firm's plan actually meters.
 
 | Command | What it does |
 |---|---|
+| Librarian: Open Setup (choose model) | First-run page: provider and exact model. Opens automatically until you choose. |
+| Librarian: Estimate Token Savings | Replays your git history and sessions; opens a report |
 | Librarian: Index Workspace | Incremental index of everything (only changed files cost anything) |
 | Librarian: Build Skeletons Only (no AI) | Free full pass |
 | Librarian: Refresh Stale Entries | Re-index files that changed since indexing |

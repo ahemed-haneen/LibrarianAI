@@ -100,8 +100,9 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
     const saved = Math.max(0, s.estTokensIfFullFiles - s.estTokensDelivered);
     const savings = new CoverageNode(`Est. tokens saved: ${saved.toLocaleString()}`, vscode.TreeItemCollapsibleState.None);
     savings.description = `${s.promptsBuilt} context pack(s)`;
-    savings.tooltip = 'Estimate: tokens of the full files Librarian pointed to, minus the tokens it actually sent. ~4 chars per token.';
+    savings.tooltip = 'Running total: full-file tokens of the files Librarian pointed to, minus the tokens it sent. Click for a full estimate replayed on your git history.';
     savings.iconPath = new vscode.ThemeIcon('graph');
+    savings.command = { command: 'trishAI.estimateSavings', title: 'Estimate token savings' };
 
     const nodes = [ready, savings];
     if (counts.stale) {

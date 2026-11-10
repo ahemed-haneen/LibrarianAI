@@ -1,5 +1,14 @@
 # Change Log
 
+## [0.2.0]
+
+### Added
+- **Librarian Setup** page that opens on first run. You choose the provider and the exact Copilot model, with low-cost/premium hints. Nothing is pre-selected.
+- **Estimate Token Savings** (command, sidebar and `librarian estimate`): replays git history and sessions leave-one-out, and reports tokens saved, recall and an optional cost.
+
+### Changed
+- Copilot summaries use only the model you chose (`trishAI.copilotModel`). The automatic `copilotModelFamilies` preference and the "any model" fallback are removed.
+
 ## [0.1.0]
 
 ### Added

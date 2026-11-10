@@ -80,10 +80,10 @@ export class TaskMemory {
   }
 
   /** Past tasks most similar to this one. */
-  similar(task: string, min = 0.15): { rec: TaskRecord; sim: number }[] {
+  similar(task: string, min = 0.15, include: (t: TaskRecord) => boolean = () => true): { rec: TaskRecord; sim: number }[] {
     const q = new Set(tokenize(task));
     return this.all()
-      .filter((t) => t.touched.length > 0)
+      .filter((t) => t.touched.length > 0 && include(t))
       .map((rec) => ({ rec, sim: jaccard(q, new Set(rec.tokens)) }))
       .filter((x) => x.sim >= min)
       .sort((a, b) => b.sim - a.sim)
@@ -91,10 +91,10 @@ export class TaskMemory {
   }
 
   /** Per-file boost derived from similar past tasks (recent, local experience weighs a bit more). */
-  boosts(task: string): Map<string, { score: number; because: string }> {
+  boosts(task: string, include?: (t: TaskRecord) => boolean): Map<string, { score: number; because: string }> {
     const out = new Map<string, { score: number; because: string }>();
     const now = Date.now();
-    for (const { rec, sim } of this.similar(task)) {
+    for (const { rec, sim } of this.similar(task, 0.15, include)) {
       const ageDays = (now - Date.parse(rec.at)) / 86_400_000;
       const recency = 1 / (1 + ageDays / 90);
       const weight = sim * recency * (rec.source === 'local' ? 1.2 : 1) * 6;
@@ -112,18 +112,23 @@ export class TaskMemory {
   }
 }
 
+export interface GitTask {
+  ref: string;
+  task: string;
+  files: string[];
+  at: string;
+}
+
 /**
- * Learn from git history: each first-parent commit (a squash-merge or merge of a PR on main)
- * becomes a task record "commit message -> files changed". Runs in CI after every merge.
+ * Read "task -> files changed" pairs from first-parent git history (squash-merges / merges of PRs).
+ * @param spec `a..b` range, a single commit, or a number N meaning "the last N first-parent commits".
  */
-/** @param spec `a..b` range, a single commit, or a number N meaning "the last N first-parent commits". */
-export function learnFromGit(root: string, spec: string, layer: LayerName = 'shared'): { added: number; skipped: number } {
-  const memory = new TaskMemory(root);
+export function readGitTasks(root: string, spec: string): { tasks: GitTask[]; skipped: number } {
   const git = (args: string[]) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   const revArgs = spec.includes('..') ? [spec] : /^\d+$/.test(spec) ? ['-n', spec, 'HEAD'] : ['-1', spec];
   const shas = git(['rev-list', '--first-parent', ...revArgs]).split('\n').filter(Boolean);
-  let added = 0;
+  const tasks: GitTask[] = [];
   let skipped = 0;
   for (const sha of shas.reverse()) {
     const msg = git(['show', '-s', '--format=%s%n%b', sha]).trim();
@@ -137,26 +142,36 @@ export function learnFromGit(root: string, spec: string, layer: LayerName = 'sha
     } catch {
       files = git(['show', '--name-only', '--format=', sha]).split('\n').filter(isSourcePath);
     }
-    if (files.length === 0 || files.length > MAX_FILES_PER_TASK) {
-      skipped++;
-      continue;
-    }
     const task = msg
       .replace(/^Merge pull request #\d+ from \S+\s*/i, '')
       .replace(/^Merge branch .*$/im, '')
       .replace(/Co-authored-by:.*$/gim, '')
       .trim()
       .slice(0, 800);
-    if (!task) {
+    if (files.length === 0 || files.length > MAX_FILES_PER_TASK || !task) {
       skipped++;
       continue;
     }
-    const at = git(['show', '-s', '--format=%cI', sha]).trim();
-    if (memory.addMerged(layer, { task, touched: files, at, ref: sha })) {
+    tasks.push({ ref: sha, task, files, at: git(['show', '-s', '--format=%cI', sha]).trim() });
+  }
+  return { tasks, skipped };
+}
+
+/**
+ * Learn from git history: each first-parent commit (a squash-merge or merge of a PR on main)
+ * becomes a task record "commit message -> files changed". Runs in CI after every merge.
+ */
+export function learnFromGit(root: string, spec: string, layer: LayerName = 'shared'): { added: number; skipped: number } {
+  const memory = new TaskMemory(root);
+  const { tasks, skipped } = readGitTasks(root, spec);
+  let added = 0;
+  let dupes = 0;
+  for (const t of tasks) {
+    if (memory.addMerged(layer, { task: t.task, touched: t.files, at: t.at, ref: t.ref })) {
       added++;
     } else {
-      skipped++;
+      dupes++;
     }
   }
-  return { added, skipped };
+  return { added, skipped: skipped + dupes };
 }

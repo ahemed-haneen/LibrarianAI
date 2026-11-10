@@ -1,4 +1,5 @@
 import * as assert from 'assert';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -9,6 +10,8 @@ import { IndexView } from '../../core/indexStore';
 import { runIndex } from '../../core/indexer';
 import { Librarian } from '../../core/librarian';
 import { LlmClient } from '../../core/llm';
+import { costHint } from '../../core/modelHints';
+import { estimateSavings } from '../../core/savings';
 import { isSourcePath } from '../../core/sourceFiles';
 import { TOOL_DEFS } from '../../core/tools';
 import { tokenize } from '../../core/util';
@@ -246,5 +249,54 @@ describe('package.json contributions', () => {
     for (const t of pkg.contributes.languageModelTools as { toolReferenceName: string }[]) {
       assert.ok(INSTRUCTIONS_BLOCK.includes(`#${t.toolReferenceName}`), t.toolReferenceName);
     }
+  });
+});
+
+describe('model cost hints', () => {
+  test('flags cheap and premium families, never guesses confidently otherwise', () => {
+    for (const f of ['gpt-4.1', 'gpt-4o', 'gpt-4o-mini', 'gpt-5-mini', 'claude-haiku-4.5', 'gemini-2.0-flash', 'o3-mini']) {
+      assert.strictEqual(costHint(f), 'low', f);
+    }
+    for (const f of ['gpt-5', 'gpt-5.1', 'claude-sonnet-4.5', 'claude-opus-4.1', 'o3', 'gemini-2.5-pro']) {
+      assert.strictEqual(costHint(f), 'premium', f);
+    }
+    assert.strictEqual(costHint('some-new-model'), 'unknown');
+  });
+});
+
+describe('savings estimate', () => {
+  test('replays git history leave-one-out and reports savings and recall', async () => {
+    const filler = (name: string) =>
+      Array.from({ length: 60 }, (_, i) => `function ${name}Helper${i}(x: number): number { return x * ${i} + ${i}; }`).join('\n');
+    const root = tmpRepo({
+      'src/billing/invoice.ts': `import { computeVat } from './tax';\n/** Builds invoices for customers. */\nexport function createInvoice(customerId: string): Invoice { return {} as Invoice; }\n${filler('inv')}`,
+      'src/billing/tax.ts': `/** VAT and sales tax rules. */\nexport function computeVat(amount: number, country: string): number { return amount; }\n${filler('tax')}`,
+      'src/http/routes.ts': `import { createInvoice } from '../billing/invoice';\nexport function registerRoutes(app: App): void {}\n${filler('routes')}`,
+      'src/ui/button.ts': `export function Button(label: string): Element { return null as any; }\n${filler('btn')}`,
+      'src/ui/theme.ts': `export const theme = { primary: 'blue' };\n${filler('theme')}`,
+    });
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
+    git('init', '-q');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'initial import');
+    fs.appendFileSync(path.join(root, 'src/billing/tax.ts'), '\nexport const EU_VAT = 0.2;');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'Add EU VAT rate to tax computation');
+    fs.appendFileSync(path.join(root, 'src/ui/button.ts'), '\nexport const BUTTON_SIZE = 3;');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qam', 'Make the button bigger');
+
+    await runIndex({ root, layer: 'local' });
+    const lib = new Librarian(root);
+    const before = lib.view.layers.local.stats().promptsBuilt;
+    const r = await estimateSavings(lib, { commits: 10, costPerMillionTokens: 3 });
+
+    assert.ok(r.cases.length >= 2, `cases: ${r.cases.length}`);
+    const vat = r.cases.find((c) => c.task.includes('EU VAT'))!;
+    assert.deepStrictEqual(vat.found, ['src/billing/tax.ts']);
+    assert.ok(vat.withLibrarian < vat.without, 'pack is cheaper than exploring neighbours');
+    assert.ok(r.totals.recall > 0);
+    assert.match(r.markdown, /Context tokens per task/);
+    assert.match(r.markdown, /per 1,000 tasks/);
+    assert.match(r.markdown, /How this is calculated/);
+    assert.strictEqual(lib.view.layers.local.stats().promptsBuilt, before, 'estimates do not pollute usage stats');
   });
 });

@@ -11,6 +11,8 @@ import { CoverageNode, CoverageTreeProvider } from './coverageTreeProvider';
 import { LibrarianPanel } from './librarianPanel';
 import { registerChatParticipant } from './vscode/chatParticipant';
 import { CopilotLlm } from './vscode/copilotLlm';
+import { SETUP_DONE_KEY, SetupPanel } from './vscode/setupPanel';
+import { estimateSavings } from './core/savings';
 import { registerLmTools } from './vscode/lmTools';
 import { TaskTracker } from './vscode/taskTracker';
 
@@ -20,7 +22,7 @@ function cfg() {
   return vscode.workspace.getConfiguration('trishAI');
 }
 
-async function makeLlm(context: vscode.ExtensionContext): Promise<LlmClient | { error: string }> {
+async function makeLlm(context: vscode.ExtensionContext): Promise<LlmClient | { error: string; needsSetup?: boolean }> {
   const provider = cfg().get<string>('aiProvider', 'copilot');
   if (provider === 'none') {
     return { error: 'AI provider is set to "none" — only skeletons were generated.' };
@@ -32,7 +34,12 @@ async function makeLlm(context: vscode.ExtensionContext): Promise<LlmClient | { 
     }
     return new AnthropicClient(key, cfg().get<string>('anthropicModel', 'claude-haiku-5-5'));
   }
-  return new CopilotLlm(cfg().get<string[]>('copilotModelFamilies', ['gpt-4.1', 'gpt-5-mini', 'gpt-4o-mini', 'gpt-4o']));
+  const modelId = cfg().get<string>('copilotModel', '').trim();
+  if (!modelId) {
+    // Never pick a model on the user's behalf: it could be a premium one.
+    return { error: 'No Copilot model chosen for summaries yet, so only free skeletons were built.', needsSetup: true };
+  }
+  return new CopilotLlm(modelId);
 }
 
 /** Move a key from the old plain-text setting into SecretStorage (once). */
@@ -84,10 +91,12 @@ export function activate(context: vscode.ExtensionContext) {
     }
     let llm: LlmClient | undefined;
     let warn: string | undefined;
+    let needsSetup = false;
     if (opts.withAi !== false) {
       const made = await makeLlm(context);
       if ('error' in made) {
         warn = made.error;
+        needsSetup = !!made.needsSetup;
       } else {
         llm = made;
       }
@@ -127,7 +136,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const msg = summarise(result, llm?.label);
     if (warn) {
-      vscode.window.showWarningMessage(`${msg}. ${warn}`, 'Open Settings').then((c) => c && vscode.commands.executeCommand('workbench.action.openSettings', '@ext:trinet-ai-smart-assist'));
+      const action = needsSetup ? 'Open Setup' : 'Open Settings';
+      vscode.window.showWarningMessage(`${msg}. ${warn}`, action).then((c) => {
+        if (c === 'Open Setup') {
+          SetupPanel.show(context, refreshTree);
+        } else if (c) {
+          vscode.commands.executeCommand('workbench.action.openSettings', '@ext:trinet-ai-smart-assist');
+        }
+      });
     } else if (result.errors.length) {
       const detail = result.errors.slice(0, 3).map((e) => `${e.path}: ${e.message}`).join('; ');
       vscode.window.showErrorMessage(`${msg}. ${detail}`);
@@ -221,6 +237,39 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }),
 
+    vscode.commands.registerCommand('trishAI.openSetup', () => SetupPanel.show(context, refreshTree)),
+
+    vscode.commands.registerCommand('trishAI.estimateSavings', async () => {
+      if (!root) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      const report = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Librarian: estimating token savings from your history…' },
+        async () => {
+          await runIndex({ root, layer: layer(), policy: policy() }); // free: makes sure skeletons are current
+          librarian = new Librarian(root, policy());
+          // Use the chosen model's own tokenizer when there is one (counting does not send a chat request).
+          let count: ((t: string) => Promise<number>) | undefined;
+          let tokenizerLabel: string | undefined;
+          const modelId = cfg().get<string>('copilotModel', '').trim();
+          if (cfg().get<string>('aiProvider') === 'copilot' && modelId) {
+            const model = await CopilotLlm.find(modelId).catch(() => undefined);
+            if (model) {
+              count = async (t) => model.countTokens(t);
+              tokenizerLabel = `${model.name} tokenizer`;
+            }
+          }
+          const price = cfg().get<number>('costPerMillionTokens', 0);
+          return estimateSavings(librarian, { budget: budget(), count, tokenizerLabel, costPerMillionTokens: price || undefined });
+        }
+      );
+      const doc = await vscode.workspace.openTextDocument({ content: report.markdown, language: 'markdown' });
+      await vscode.window.showTextDocument(doc, { preview: false });
+      await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
+      refreshTree();
+    }),
+
     vscode.commands.registerCommand('trishAI.showFeatures', () =>
       vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.joinPath(context.extensionUri, 'FEATURES.md'))
     )
@@ -262,6 +311,15 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  // ---- first run: make the user choose a model before any summary is generated ----
+  const needsChoice =
+    !context.globalState.get<boolean>(SETUP_DONE_KEY, false) &&
+    cfg().get<string>('aiProvider', 'copilot') === 'copilot' &&
+    !cfg().get<string>('copilotModel', '').trim();
+  if (needsChoice) {
+    setTimeout(() => SetupPanel.show(context, refreshTree), 1500);
+  }
 
   // ---- free background skeleton pass on startup ----
   if (root && cfg().get<boolean>('autoIndexOnStartup', true)) {

@@ -10,10 +10,11 @@ import { runIndex } from './core/indexer';
 import { Librarian } from './core/librarian';
 import { AnthropicClient, GITHUB_MODELS_URL, LlmClient, OpenAICompatibleClient } from './core/llm';
 import { runMcpServer } from './core/mcpServer';
+import { estimateSavings } from './core/savings';
 import { changedSince } from './core/sourceFiles';
 import { learnFromGit } from './core/taskMemory';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 const HELP = `librarian ${VERSION}
 
@@ -24,6 +25,7 @@ Commands
   learn      Learn task -> files mappings from git history (merged PRs)
   query      Print the context pack for a task
   status     Show index coverage and freshness
+  estimate   Estimate token savings by replaying past tasks from git history
   mcp        Run as an MCP server on stdio
   install-instructions   Add/refresh the Librarian block in .github/copilot-instructions.md
 
@@ -44,8 +46,10 @@ index options
 learn options
   --range <a..b> | --commit <sha> | --last <n>
 
-query options
+query / estimate options
   --budget <tokens>         Token budget (default 6000)
+  --commits <n>             (estimate) recent commits to replay (default 50)
+  --price <usd>             (estimate) input price per 1M tokens, for an indicative cost
 
 Environment
   GITHUB_TOKEN              for github-models (Actions: permissions: models: read)
@@ -177,6 +181,20 @@ async function main(): Promise<number> {
       const r = new Librarian(root).findRelevant(task, { budget: Number(str(flags.budget) ?? 6000) });
       console.log(r.prompt);
       console.error(`\n~${r.deliveredTokens} tokens (vs ~${r.fullFileTokens} if the ${r.files.length} files were read in full)`);
+      return 0;
+    }
+    case 'estimate': {
+      const lib = new Librarian(root);
+      if (lib.view.allPaths().length === 0) {
+        console.error('Building skeletons first (free)...');
+        await runIndex({ root, layer });
+      }
+      const r = await estimateSavings(new Librarian(root), {
+        commits: Number(str(flags.commits) ?? 50),
+        budget: Number(str(flags.budget) ?? 6000),
+        costPerMillionTokens: str(flags.price) ? Number(str(flags.price)) : undefined,
+      });
+      console.log(r.markdown);
       return 0;
     }
     case 'status':

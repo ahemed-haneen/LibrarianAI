@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import { IndexView, ResolvedEntry } from './indexStore';
 import { stripFence } from './indexer';
-import { TaskMemory } from './taskMemory';
+import { TaskMemory, TaskRecord } from './taskMemory';
 import { absFromRel, estimateTokens, hashText, tokenize } from './util';
 
 export interface Candidate {
@@ -106,6 +106,8 @@ export class SearchIndex {
 export interface RetrieveOptions {
   maxFiles?: number;
   maxRelated?: number;
+  /** Restrict which remembered tasks may influence ranking (used for leave-one-out evaluation). */
+  memoryFilter?: (t: TaskRecord) => boolean;
 }
 
 export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory, task: string, opts: RetrieveOptions = {}): Candidate[] {
@@ -141,12 +143,12 @@ export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory
     }
   }
 
-  for (const [p, b] of memory.boosts(task)) {
+  for (const [p, b] of memory.boosts(task, opts.memoryFilter)) {
     if (view.resolve(p)) {
       add(p, b.score, b.because);
     }
   }
-  const best = memory.similar(task, 0.8)[0];
+  const best = memory.similar(task, 0.8, opts.memoryFilter)[0];
   if (best) {
     best.rec.touched.forEach((p) => view.resolve(p) && add(p, 10, 'reused from near-identical past task'));
   }
