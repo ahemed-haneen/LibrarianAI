@@ -1,15 +1,19 @@
 import * as assert from 'assert';
-
-// You can import and use all API from the 'vscode' module
-// as well as import your extension to test it
 import * as vscode from 'vscode';
-// import * as myExtension from '../../extension';
 
-suite('Extension Test Suite', () => {
-	vscode.window.showInformationMessage('Start all tests.');
+suite('Librarian extension', () => {
+	test('activates and registers commands and Copilot tools', async () => {
+		const ext = vscode.extensions.all.find((e) => e.packageJSON.name === 'trinet-ai-smart-assist');
+		assert.ok(ext, 'extension found');
+		await ext!.activate();
 
-	test('Sample test', () => {
-		assert.strictEqual(-1, [1, 2, 3].indexOf(5));
-		assert.strictEqual(-1, [1, 2, 3].indexOf(0));
+		const commands = await vscode.commands.getCommands(true);
+		for (const c of ['trishAI.indexWorkspace', 'trishAI.askLibrarian', 'trishAI.installCopilotInstructions', 'trishAI.showFeatures']) {
+			assert.ok(commands.includes(c), `command ${c}`);
+		}
+		const tools = vscode.lm.tools.map((t) => t.name);
+		for (const t of ['librarian_findRelevantFiles', 'librarian_getSkeleton', 'librarian_getRelatedFiles']) {
+			assert.ok(tools.includes(t), `tool ${t}`);
+		}
 	});
 });

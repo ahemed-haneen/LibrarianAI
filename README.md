@@ -1,70 +1,78 @@
-# TrishAI — VS Code Extension
+# Librarian (TrishAI) — VS Code extension
 
-A VS Code extension that helps TriNet employees work more productively with AI tools by generating and tracking **AST skeleton files** for their TypeScript/JavaScript codebase. The goal is to feed AI agents a compact, structured representation of a codebase's public API rather than full source files — reducing token costs while keeping context meaningful.
+Makes the **GitHub Copilot subscription your firm already provides** go further. Librarian keeps
+a compact, always-current index of the codebase (signatures, short summaries, the import graph
+and what changed for past tasks) and gives Copilot only what a task needs. It **learns from use**,
+so file picks get better over time, and in CI it builds **one shared index per merge for the
+whole firm**.
 
-## What it does
+**Full list of capabilities and optimisations: [FEATURES.md](FEATURES.md)**, also available in
+VS Code via *Librarian: Show Features*.
 
-### Codebase AI Coverage Tracker
-A sidebar tree view (activity bar) shows every `.ts/.tsx/.js/.jsx` file in your workspace and whether it has been **indexed** (i.e., has a generated skeleton). The root of the tree displays an **AI Readiness** percentage — the share of files that have been mapped — with a colour-coded icon (green > 75%, yellow > 25%, orange otherwise).
+## How it fits with Copilot
 
-### AST Skeleton Generation
-Right-clicking any file or folder in the tree and selecting **Generate AST Skeleton** (⚡) triggers `AstGenerator`, which:
+You keep working in Copilot Chat. Librarian runs alongside it:
 
-1. Parses the file(s) with the TypeScript compiler API (`ts.createSourceFile`).
-2. Walks the top-level AST and extracts only **exported** declarations:
-   - Functions → `export function name(params): returnType;`
-   - Classes → class shell with method and property signatures
-   - Interfaces → full member list
-   - Type aliases → `export type Name = ...;`
-3. Writes a `.skeleton.md` file into a `.trishAI/` mirror directory inside the workspace root (e.g. `src/foo.ts` → `.trishAI/src/foo.ts.skeleton.md`).
+| Layer | How |
+|---|---|
+| **Copilot agent mode calls Librarian itself** | Language Model Tools `#librarianFind`, `#librarianSkeleton`, `#librarianRelated` |
+| **Copilot is told to use them** | `Librarian: Install Copilot Instructions` → `.github/copilot-instructions.md` |
+| **Explicit hand-off** | `@librarian <task>` in Copilot Chat (uses the model you picked), `/context` for the pack only |
+| **Any other AI** | *Build Context Pack* panel copies a budgeted prompt to the clipboard |
+| **Other IDEs / agents** | `librarian mcp` ([docs/MCP.md](docs/MCP.md)) |
 
-The skeletons are lightweight markdown code blocks — just the public contract of each file, with no implementation details.
+## Quick start
 
-## Project structure
+1. Install the extension and open your repository. Skeletons build in the background (free).
+2. Run **Librarian: Install Copilot Instructions** and commit the file.
+3. Optional: **Librarian: Index Workspace** to add AI summaries. Uses your Copilot, cheapest
+   models first (`trishAI.copilotModelFamilies`).
+4. Optional: **Librarian: Learn from Recent Commits** to seed task memory from git history.
+5. Work as usual in Copilot agent mode, or ask `@librarian`.
+
+For the firm-wide setup see **[docs/CI.md](docs/CI.md)**.
+
+## Architecture
 
 ```
 src/
-  extension.ts           — activation, command registration
-  astGenerator.ts        — TypeScript AST parsing & skeleton file writer
-  coverageTreeProvider.ts — VS Code TreeDataProvider for the sidebar view
+  core/                      VS Code–free; shared by extension, CLI, CI and MCP
+    analyzer.ts              TypeScript-AST skeletons + import extraction
+    sourceFiles.ts           single "which files are indexed" rule (git ls-files aware)
+    indexStore.ts            shared/local layers, manifest, freshness by content hash
+    indexer.ts               incremental indexing; summaries only when the API changes
+    retrieval.ts             BM25 + names + import graph + task memory, token budget
+    taskMemory.ts            learning from edits and merged commits
+    librarian.ts             the service every front end calls
+    tools.ts / mcpServer.ts  tool contract + MCP stdio server
+    llm.ts                   Anthropic, GitHub Models / OpenAI-compatible clients
+    copilotInstructions.ts   managed block in .github/copilot-instructions.md
+  vscode/
+    copilotLlm.ts            vscode.lm (your Copilot) with cheap-model preference
+    lmTools.ts               Copilot agent-mode tools
+    chatParticipant.ts       @librarian
+    taskTracker.ts           links saved files to the active task
+  extension.ts, coverageTreeProvider.ts, librarianPanel.ts
+  cli.ts                     `librarian` command (CI, MCP, scripting)
+templates/librarian-index.yml  GitHub Action for the shared index
 ```
 
-## Commands
+Index layout (in each indexed repository):
 
-| Command | Description |
-|---|---|
-| `trishAI.generateSkeleton` | Generate AST skeleton for a file or folder |
-| `trishAICoverageView.refresh` | Re-scan the workspace and refresh the tree |
-| `trinet-ai-smart-assist.helloWorld` | Smoke-test command |
-
-## Output format
-
-Skeletons are stored under `.trishAI/` at the workspace root (excluded from the tree view itself). Each file looks like:
-
-```markdown
-# Skeleton: `src/myModule.ts`
-*Generated: 2025-01-01T00:00:00.000Z*
-
-\`\`\`typescript
-export function doThing(input: string): boolean;
-export class MyService {
-  someMethod(id: number): Promise<void>;
-  name: string;
-}
-export interface Config {
-  timeout: number;
-  retries: number;
-}
-\`\`\`
+```
+.trishAI/
+  shared/   committed by CI: manifest.json, memory.json, files/<path>.skeleton.md|.context.md
+  local/    your overlay + personal task history (git-ignored)
 ```
 
 ## Development
 
 ```bash
 pnpm install
-pnpm run compile   # type-check + lint + bundle
-pnpm run watch     # watch mode (esbuild + tsc)
-pnpm test          # run extension tests
+pnpm run compile      # type-check + lint + bundle (dist/extension.js, dist/cli.js)
+pnpm test             # core unit tests (node:test, no VS Code download)
+pnpm run test:vscode  # extension-host tests
+node dist/cli.js --help
 ```
 
-Requires VS Code `^1.134.0`. Built with TypeScript 6, bundled with esbuild.
+Requires VS Code `^1.134.0`. Built with TypeScript 6 and bundled with esbuild.

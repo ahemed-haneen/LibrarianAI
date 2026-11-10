@@ -25,16 +25,18 @@ const esbuildProblemMatcherPlugin = {
 
 async function main() {
 	const ctx = await esbuild.context({
-		entryPoints: [
-			'src/extension.ts'
-		],
+		// extension.js for VS Code; cli.js for CI / MCP (no vscode dependency)
+		entryPoints: {
+			extension: 'src/extension.ts',
+			cli: 'src/cli.ts',
+		},
 		bundle: true,
 		format: 'cjs',
 		minify: production,
 		sourcemap: !production,
 		sourcesContent: false,
 		platform: 'node',
-		outfile: 'dist/extension.js',
+		outdir: 'dist',
 		external: ['vscode'],
 		logLevel: 'silent',
 		plugins: [

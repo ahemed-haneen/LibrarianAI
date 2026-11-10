@@ -1,252 +1,173 @@
-import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
-import { ContextGenerator } from './contextGenerator';
+import * as vscode from 'vscode';
+import { Librarian } from './core/librarian';
+import { listSourceFiles } from './core/sourceFiles';
+import { absFromRel, hashText } from './core/util';
+
+type FileState = 'unmapped' | 'stale' | 'skeleton' | 'full';
 
 export class CoverageNode extends vscode.TreeItem {
   constructor(
     public readonly label: string,
-    public readonly collapsibleState: vscode.TreeItemCollapsibleState,
+    collapsibleState: vscode.TreeItemCollapsibleState,
+    /** Absolute path for files/folders; undefined for info rows. */
     public readonly fsPath?: string,
-    public readonly isSummaryHeader?: boolean,
-    public readonly isFileNode?: boolean
+    /** Root-relative posix path (files) or prefix (folders). */
+    public readonly rel?: string,
+    public readonly isFileNode = false
   ) {
     super(label, collapsibleState);
   }
 }
 
+/** Sidebar: coverage %, freshness per file, and estimated savings. */
 export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNode> {
-  private _onDidChangeTreeData: vscode.EventEmitter<CoverageNode | undefined | null | void> =
-    new vscode.EventEmitter<CoverageNode | undefined | null | void>();
-  readonly onDidChangeTreeData: vscode.Event<CoverageNode | undefined | null | void> =
-    this._onDidChangeTreeData.event;
+  private emitter = new vscode.EventEmitter<CoverageNode | undefined | void>();
+  readonly onDidChangeTreeData = this.emitter.event;
 
-  private totalFiles = 0;
-  private indexedFiles = 0;
+  private files: string[] = [];
+  private states = new Map<string, FileState>();
+  private hashCache = new Map<string, { mtime: number; size: number; hash: string }>();
 
-  private defaultIgnored = new Set([
-    'node_modules', 'dist', 'build', 'out', 'coverage',
-    '.git', '.vscode', '.idea', '.turbo', '.trishAI'
-  ]);
-
-  private gitignorePatterns: RegExp[] = [];
-
-  constructor(private workspaceRoot: string | undefined) {
-    this.loadGitignore();
-    this.ensureTrishDirectory();
-  }
+  constructor(private root: string | undefined, private lib: () => Librarian | undefined) {}
 
   refresh(): void {
-    this.loadGitignore();
-    this._onDidChangeTreeData.fire();
+    this.emitter.fire();
   }
 
-  getTreeItem(element: CoverageNode): vscode.TreeItem {
-    return element;
+  getTreeItem(el: CoverageNode): vscode.TreeItem {
+    return el;
   }
 
-  private ensureTrishDirectory(): void {
-    if (!this.workspaceRoot) return;
-    const trishDir = path.join(this.workspaceRoot, '.trishAI');
-    if (!fs.existsSync(trishDir)) {
-      fs.mkdirSync(trishDir, { recursive: true });
-    }
-  }
-
-  private loadGitignore(): void {
-    this.gitignorePatterns = [];
-    if (!this.workspaceRoot) return;
-
-    const gitignorePath = path.join(this.workspaceRoot, '.gitignore');
-    if (!fs.existsSync(gitignorePath)) return;
-
+  /** Content hash, cached by mtime+size so refreshes don't re-read unchanged files. */
+  private hashOf(rel: string): string | undefined {
     try {
-      const content = fs.readFileSync(gitignorePath, 'utf8');
-      const lines = content.split(/\r?\n/);
-      for (let line of lines) {
-        line = line.trim();
-        if (!line || line.startsWith('#')) continue;
-        const patternStr = line.replace(/\/$/, '').replace(/^\//, '');
-        const regexStr = patternStr
-          .replace(/\./g, '\\.')
-          .replace(/\*\*/g, '.*')
-          .replace(/\*/g, '[^/]*');
-        this.gitignorePatterns.push(new RegExp(`(^|/)${regexStr}($|/)`));
+      const abs = absFromRel(this.root!, rel);
+      const st = fs.statSync(abs);
+      const c = this.hashCache.get(rel);
+      if (c && c.mtime === st.mtimeMs && c.size === st.size) {
+        return c.hash;
       }
+      const hash = hashText(fs.readFileSync(abs, 'utf8'));
+      this.hashCache.set(rel, { mtime: st.mtimeMs, size: st.size, hash });
+      return hash;
     } catch {
-      // Ignore
+      return undefined;
     }
   }
 
-  private isIgnored(name: string, fullPath: string): boolean {
-    if (name.startsWith('.')) return true;
-    if (this.defaultIgnored.has(name)) return true;
-    if (this.workspaceRoot) {
-      const relativePath = path.relative(this.workspaceRoot, fullPath).replace(/\\/g, '/');
-      return this.gitignorePatterns.some((regex) => regex.test(name) || regex.test(relativePath));
+  private scan(): void {
+    const l = this.lib()!;
+    l.view.reload();
+    this.files = listSourceFiles(this.root!);
+    this.states.clear();
+    for (const f of this.files) {
+      const e = l.view.resolve(f, this.hashOf(f));
+      this.states.set(f, !e ? 'unmapped' : !e.skeletonFresh ? 'stale' : e.contextFresh ? 'full' : 'skeleton');
     }
-    return false;
   }
 
-  private getSkeletonPath(fullFilePath: string): string {
-    const relative = path.relative(this.workspaceRoot!, fullFilePath);
-    return path.join(
-      this.workspaceRoot!,
-      '.trishAI',
-      path.dirname(relative),
-      `${path.basename(fullFilePath)}.skeleton.md`
-    );
-  }
-
-  private hasSkeletonFile(fullFilePath: string): boolean {
-    if (!this.workspaceRoot) return false;
-    return fs.existsSync(this.getSkeletonPath(fullFilePath));
-  }
-
-  private getSkeletonMtime(fullFilePath: string): number | null {
-    if (!this.workspaceRoot) return null;
-    const skeletonPath = this.getSkeletonPath(fullFilePath);
-    return fs.existsSync(skeletonPath) ? fs.statSync(skeletonPath).mtimeMs : null;
-  }
-
-  private hasContextFile(fullFilePath: string): boolean {
-    if (!this.workspaceRoot) return false;
-    return fs.existsSync(ContextGenerator.getContextPath(this.workspaceRoot, fullFilePath));
-  }
-
-  async getChildren(element?: CoverageNode): Promise<CoverageNode[]> {
-    if (!this.workspaceRoot) {
+  async getChildren(el?: CoverageNode): Promise<CoverageNode[]> {
+    if (!this.root || !this.lib()) {
       return [new CoverageNode('No workspace open', vscode.TreeItemCollapsibleState.None)];
     }
-
-    if (!element) {
-      this.totalFiles = 0;
-      this.indexedFiles = 0;
-      this.calculateMetrics(this.workspaceRoot);
-
-      const coveragePct =
-        this.totalFiles > 0
-          ? ((this.indexedFiles / this.totalFiles) * 100).toFixed(1)
-          : '0.0';
-
-      const summaryNode = new CoverageNode(
-        `AI Readiness: ${coveragePct}%`,
-        vscode.TreeItemCollapsibleState.None,
-        undefined,
-        true
-      );
-
-      summaryNode.description = `${this.indexedFiles}/${this.totalFiles} files indexed`;
-      summaryNode.iconPath = new vscode.ThemeIcon(
-        Number(coveragePct) > 75 ? 'pass-filled' : Number(coveragePct) > 25 ? 'history' : 'info',
-        new vscode.ThemeColor(
-          Number(coveragePct) > 75 ? 'charts.green' : Number(coveragePct) > 25 ? 'charts.yellow' : 'charts.orange'
-        )
-      );
-
-      return [summaryNode, ...this.getNodesForDirectory(this.workspaceRoot)];
+    if (!el) {
+      this.scan();
+      return [...this.summaryNodes(), ...this.childrenOf('')];
     }
-
-    if (element.fsPath && !element.isFileNode) {
-      return this.getNodesForDirectory(element.fsPath);
+    if (el.rel !== undefined && !el.isFileNode) {
+      return this.childrenOf(el.rel);
     }
-
     return [];
   }
 
-  private calculateMetrics(dirPath: string): void {
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  private summaryNodes(): CoverageNode[] {
+    const total = this.files.length;
+    const counts = { unmapped: 0, stale: 0, skeleton: 0, full: 0 };
+    this.states.forEach((s) => counts[s]++);
+    const fresh = counts.skeleton + counts.full;
+    const pct = total ? (fresh / total) * 100 : 0;
 
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        if (this.isIgnored(entry.name, fullPath)) continue;
+    const ready = new CoverageNode(`AI Readiness: ${pct.toFixed(1)}%`, vscode.TreeItemCollapsibleState.None);
+    ready.description = `${fresh}/${total} fresh · ${counts.full} summarised${counts.stale ? ` · ${counts.stale} stale` : ''}`;
+    ready.tooltip = 'Only files whose skeleton matches the current source count as ready. Stale files changed since they were indexed.';
+    ready.iconPath = new vscode.ThemeIcon(
+      pct > 75 ? 'pass-filled' : pct > 25 ? 'history' : 'info',
+      new vscode.ThemeColor(pct > 75 ? 'charts.green' : pct > 25 ? 'charts.yellow' : 'charts.orange')
+    );
 
-        if (entry.isDirectory()) {
-          this.calculateMetrics(fullPath);
-        } else if (
-          entry.isFile() &&
-          /\.(ts|tsx|js|jsx)$/.test(entry.name) &&
-          !entry.name.endsWith('.d.ts')
-        ) {
-          this.totalFiles++;
-          if (this.hasSkeletonFile(fullPath)) {
-            this.indexedFiles++;
-          }
-        }
-      }
-    } catch {
-      // Ignore
+    const s = this.lib()!.view.layers.local.stats();
+    const saved = Math.max(0, s.estTokensIfFullFiles - s.estTokensDelivered);
+    const savings = new CoverageNode(`Est. tokens saved: ${saved.toLocaleString()}`, vscode.TreeItemCollapsibleState.None);
+    savings.description = `${s.promptsBuilt} context pack(s)`;
+    savings.tooltip = 'Estimate: tokens of the full files Librarian pointed to, minus the tokens it actually sent. ~4 chars per token.';
+    savings.iconPath = new vscode.ThemeIcon('graph');
+
+    const nodes = [ready, savings];
+    if (counts.stale) {
+      const stale = new CoverageNode(`Refresh ${counts.stale} stale file(s)`, vscode.TreeItemCollapsibleState.None);
+      stale.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
+      stale.command = { command: 'trishAI.refreshStale', title: 'Refresh stale' };
+      nodes.push(stale);
     }
+    return nodes;
   }
 
-  private getNodesForDirectory(dirPath: string): CoverageNode[] {
-    try {
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-      const nodes: CoverageNode[] = [];
-
-      for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
-        if (this.isIgnored(entry.name, fullPath)) continue;
-
-        if (entry.isDirectory()) {
-          const node = new CoverageNode(
-            entry.name,
-            vscode.TreeItemCollapsibleState.Collapsed,
-            fullPath,
-            false,
-            false
-          );
-          node.contextValue = 'codeFolder';
-          node.iconPath = new vscode.ThemeIcon('folder');
-          nodes.push(node);
-        } else if (
-          entry.isFile() &&
-          /\.(ts|tsx|js|jsx)$/.test(entry.name) &&
-          !entry.name.endsWith('.d.ts')
-        ) {
-          const isIndexed = this.hasSkeletonFile(fullPath);
-          const hasContext = this.hasContextFile(fullPath);
-          const mtime = this.getSkeletonMtime(fullPath);
-          const timeDesc = mtime ? ` • ${new Date(mtime).toLocaleDateString()}` : '';
-
-          const node = new CoverageNode(
-            entry.name,
-            vscode.TreeItemCollapsibleState.None,
-            fullPath,
-            false,
-            true
-          );
-
-          if (isIndexed && hasContext) {
-            node.contextValue = 'codeFileIndexed';
-            node.iconPath = new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.green'));
-            node.description = `Skeleton + Context${timeDesc}`;
-            node.tooltip = 'Skeleton & context indexed — click ↻ to regenerate';
-          } else if (isIndexed) {
-            node.contextValue = 'codeFileIndexed';
-            node.iconPath = new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.yellow'));
-            node.description = `Skeleton Ready${timeDesc}`;
-            node.tooltip = 'Skeleton indexed (no context yet) — click ↻ to regenerate both';
-          } else {
-            node.contextValue = 'codeFile';
-            node.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
-            node.description = 'Unmapped';
-            node.tooltip = 'Not yet indexed — click ⚡ to generate skeleton & context';
-          }
-
-          nodes.push(node);
-        }
+  private childrenOf(prefix: string): CoverageNode[] {
+    const dirs = new Set<string>();
+    const files: string[] = [];
+    const base = prefix ? prefix + '/' : '';
+    for (const f of this.files) {
+      if (!f.startsWith(base)) {
+        continue;
       }
-
-      return nodes.sort((a, b) => {
-        if (a.isFileNode === b.isFileNode) {
-          return a.label.localeCompare(b.label);
-        }
-        return a.isFileNode ? 1 : -1;
-      });
-    } catch {
-      return [];
+      const rest = f.slice(base.length);
+      const slash = rest.indexOf('/');
+      if (slash === -1) {
+        files.push(f);
+      } else {
+        dirs.add(base + rest.slice(0, slash));
+      }
     }
+
+    const dirNodes = [...dirs].sort().map((d) => {
+      const n = new CoverageNode(d.split('/').pop()!, vscode.TreeItemCollapsibleState.Collapsed, absFromRel(this.root!, d), d);
+      const inside = this.files.filter((f) => f.startsWith(d + '/'));
+      const ready = inside.filter((f) => ['skeleton', 'full'].includes(this.states.get(f)!)).length;
+      n.description = `${ready}/${inside.length}`;
+      n.contextValue = 'codeFolder';
+      n.iconPath = new vscode.ThemeIcon('folder');
+      return n;
+    });
+
+    const fileNodes = files.sort().map((f) => {
+      const n = new CoverageNode(f.split('/').pop()!, vscode.TreeItemCollapsibleState.None, absFromRel(this.root!, f), f, true);
+      n.resourceUri = vscode.Uri.file(n.fsPath!);
+      n.command = { command: 'vscode.open', title: 'Open', arguments: [n.resourceUri] };
+      const state = this.states.get(f)!;
+      n.contextValue = state === 'unmapped' ? 'codeFile' : 'codeFileIndexed';
+      switch (state) {
+        case 'full':
+          n.iconPath = new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.green'));
+          n.description = 'Skeleton + Summary';
+          break;
+        case 'skeleton':
+          n.iconPath = new vscode.ThemeIcon('symbol-interface', new vscode.ThemeColor('charts.yellow'));
+          n.description = 'Skeleton';
+          n.tooltip = 'Skeleton indexed; no AI summary yet (or summary outdated)';
+          break;
+        case 'stale':
+          n.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
+          n.description = 'Stale';
+          n.tooltip = 'File changed since it was indexed — click ↻ to refresh';
+          break;
+        default:
+          n.iconPath = new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('disabledForeground'));
+          n.description = 'Unmapped';
+          n.tooltip = 'Not yet indexed — click ⚡ to index';
+      }
+      return n;
+    });
+    return [...dirNodes, ...fileNodes];
   }
 }

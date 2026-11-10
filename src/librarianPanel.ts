@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { LibrarianPromptGenerator } from './librarianPromptGenerator';
+import * as crypto from 'crypto';
+import { Librarian } from './core/librarian';
+import { TaskTracker } from './vscode/taskTracker';
 
 export class LibrarianPanel {
   static readonly viewType = 'trishAI.librarianPanel';
@@ -7,7 +9,7 @@ export class LibrarianPanel {
   private static instance: LibrarianPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
 
-  static show(context: vscode.ExtensionContext, rootPath: string): void {
+  static show(context: vscode.ExtensionContext, lib: Librarian, tracker: TaskTracker | undefined, budget: number, onUsed: () => void): void {
     if (LibrarianPanel.instance) {
       LibrarianPanel.instance.panel.reveal(vscode.ViewColumn.One);
       return;
@@ -18,11 +20,17 @@ export class LibrarianPanel {
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    LibrarianPanel.instance = new LibrarianPanel(panel, rootPath);
+    LibrarianPanel.instance = new LibrarianPanel(panel, lib, tracker, budget, onUsed);
     context.subscriptions.push(LibrarianPanel.instance.panel);
   }
 
-  private constructor(panel: vscode.WebviewPanel, private rootPath: string) {
+  private constructor(
+    panel: vscode.WebviewPanel,
+    private lib: Librarian,
+    private tracker: TaskTracker | undefined,
+    private budget: number,
+    private onUsed: () => void
+  ) {
     this.panel = panel;
     this.panel.webview.html = this.buildHtml();
 
@@ -46,8 +54,11 @@ export class LibrarianPanel {
 
     this.panel.webview.postMessage({ command: 'loading' });
 
-    const generator = new LibrarianPromptGenerator(this.rootPath);
-    const { prompt, matchCount } = generator.generate(trimmed);
+    const result = this.lib.findRelevant(trimmed, { budget: this.budget, remember: true });
+    this.tracker?.start(result.taskId);
+    this.onUsed();
+    const prompt = result.prompt;
+    const matchCount = result.files.length;
 
     // Open result beside the panel
     const doc = await vscode.workspace.openTextDocument({ content: prompt, language: 'markdown' });
@@ -58,15 +69,19 @@ export class LibrarianPanel {
     this.panel.webview.postMessage({ command: 'done', matchCount });
 
     vscode.window.showInformationMessage(
-      `Librarian prompt ready — ${matchCount} skeleton file${matchCount !== 1 ? 's' : ''} matched. Copied to clipboard.`
+      `Librarian prompt ready — ${matchCount} file${matchCount !== 1 ? 's' : ''}, ~${result.deliveredTokens.toLocaleString()} tokens ` +
+        `(vs ~${result.fullFileTokens.toLocaleString()} reading them in full). Copied to clipboard.`
     );
   }
 
   private buildHtml(): string {
+    const nonce = crypto.randomBytes(16).toString('base64');
+    const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ask Librarian</title>
 <style>
@@ -169,8 +184,8 @@ export class LibrarianPanel {
 
 <h1>🗂 Ask Librarian</h1>
 <p class="subtitle">
-  Describe your task below. Librarian will scan your pre-indexed skeletons, find the relevant files,
-  and generate an optimised prompt you can paste directly into an AI session.
+  Describe your task below. Librarian searches the index (text match, import graph and what changed in similar past tasks),
+  and builds a compact context pack you can paste into any AI session. No AI call, no tokens spent.
 </p>
 
 <hr class="divider" />
@@ -185,17 +200,19 @@ export class LibrarianPanel {
 </div>
 
 <div class="actions">
-  <button id="submitBtn" onclick="submit()">
+  <button id="submitBtn">
     <span>Generate Prompt</span>
   </button>
   <span id="status" class="status hidden">—</span>
 </div>
 
-<script>
+<script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
   const btn = document.getElementById('submitBtn');
   const status = document.getElementById('status');
   const textarea = document.getElementById('task');
+
+  btn.addEventListener('click', submit);
 
   // Ctrl/Cmd+Enter submits
   textarea.addEventListener('keydown', (e) => {

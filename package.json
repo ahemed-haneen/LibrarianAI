@@ -1,15 +1,19 @@
 {
   "name": "trinet-ai-smart-assist",
   "displayName": "TrishAI",
-  "description": "An AI chat Agent which works on optimizing the queries for a trinet employee so that Trinet Employees can achieve increased productivity at reduced token cost",
-  "version": "0.0.1",
+  "description": "Librarian: a codebase index that makes GitHub Copilot (and other AI agents) use fewer tokens and fewer turns — and gets smarter as you use it.",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.134.0"
   },
   "categories": [
+    "AI",
+    "Chat",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -32,18 +36,27 @@
     },
     "commands": [
       {
-        "command": "trinet-ai-smart-assist.helloWorld",
-        "title": "Hello World"
-      },
-      {
         "command": "trishAI.generateSkeleton",
-        "title": "Generate AST Skeleton",
+        "title": "Librarian: Index (skeleton + summary)",
         "icon": "$(zap)"
       },
       {
         "command": "trishAI.updateSkeleton",
-        "title": "Regenerate AST Skeleton",
+        "title": "Librarian: Force Re-index",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "trishAI.indexWorkspace",
+        "title": "Librarian: Index Workspace",
+        "icon": "$(database)"
+      },
+      {
+        "command": "trishAI.indexSkeletonsOnly",
+        "title": "Librarian: Build Skeletons Only (no AI)"
+      },
+      {
+        "command": "trishAI.refreshStale",
+        "title": "Librarian: Refresh Stale Entries"
       },
       {
         "command": "trishAICoverageView.refresh",
@@ -52,37 +65,131 @@
       },
       {
         "command": "trishAI.askLibrarian",
-        "title": "Ask Librarian",
+        "title": "Librarian: Build Context Pack",
         "icon": "$(wand)"
+      },
+      {
+        "command": "trishAI.installCopilotInstructions",
+        "title": "Librarian: Install Copilot Instructions"
+      },
+      {
+        "command": "trishAI.setAnthropicApiKey",
+        "title": "Librarian: Set Anthropic API Key"
+      },
+      {
+        "command": "trishAI.learnFromCommits",
+        "title": "Librarian: Learn from Recent Commits"
+      },
+      {
+        "command": "trishAI.showStatus",
+        "title": "Librarian: Show Index Status"
+      },
+      {
+        "command": "trishAI.showFeatures",
+        "title": "Librarian: Show Features",
+        "icon": "$(info)"
       }
     ],
     "configuration": {
-      "title": "TrishAI",
+      "title": "Librarian (TrishAI)",
       "properties": {
         "trishAI.aiProvider": {
           "type": "string",
-          "enum": ["copilot", "anthropic"],
+          "enum": [
+            "copilot",
+            "anthropic",
+            "none"
+          ],
           "enumDescriptions": [
-            "Use the GitHub Copilot language model already active in this VS Code installation (no separate API key needed).",
-            "Call Anthropic directly — requires an API key set in trishAI.anthropicApiKey."
+            "Use the GitHub Copilot subscription already signed in to VS Code (no API key).",
+            "Call Anthropic directly — key set with \"Librarian: Set Anthropic API Key\".",
+            "Never call a model; build free skeletons and graph only."
           ],
           "default": "copilot",
-          "description": "AI provider used to generate context summaries for source files."
+          "description": "Model used to write per-file summaries. Summaries are cached and only regenerated when a file's API changes."
         },
-        "trishAI.copilotModel": {
+        "trishAI.copilotModelFamilies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "gpt-4.1",
+            "gpt-5-mini",
+            "gpt-4o-mini",
+            "gpt-4o"
+          ],
+          "markdownDescription": "Copilot model families to try, in order, for background summaries. Put the models your plan does **not** bill as premium requests first."
+        },
+        "trishAI.anthropicModel": {
           "type": "string",
-          "default": "",
-          "markdownDescription": "Copilot model family to prefer when `#trishAI.aiProvider#` is `copilot`. Examples: `gpt-4o`, `gpt-4o-mini`, `claude-3.5-sonnet`, `o3-mini`. Leave empty to use the best model VS Code selects automatically."
+          "default": "claude-haiku-5-5",
+          "markdownDescription": "Anthropic model used when `#trishAI.aiProvider#` is `anthropic`."
         },
         "trishAI.anthropicApiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Anthropic API key used when `#trishAI.aiProvider#` is `anthropic`. Get one at https://console.anthropic.com/."
+          "deprecationMessage": "Stored in plain text. Use the \"Librarian: Set Anthropic API Key\" command (secure storage) instead.",
+          "markdownDescription": "Deprecated — migrated to secure storage automatically."
         },
-        "trishAI.anthropicModel": {
+        "trishAI.contextRefreshPolicy": {
           "type": "string",
-          "default": "claude-haiku-4-5-20251001",
-          "markdownDescription": "Anthropic model ID used when `#trishAI.aiProvider#` is `anthropic`. Examples: `claude-haiku-4-5-20251001`, `claude-sonnet-4-6`, `claude-opus-4-8`."
+          "enum": [
+            "onApiChange",
+            "onSourceChange"
+          ],
+          "default": "onApiChange",
+          "enumDescriptions": [
+            "Regenerate a summary only when the file's exported API changes (fewest AI calls).",
+            "Regenerate whenever the file content changes (freshest, more calls)."
+          ],
+          "description": "When cached AI summaries are considered out of date."
+        },
+        "trishAI.autoUpdateSkeletons": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-extract the skeleton of a file when you save it (free, no AI)."
+        },
+        "trishAI.autoIndexOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Build/refresh skeletons for the whole workspace in the background on startup (free, no AI)."
+        },
+        "trishAI.promptTokenBudget": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 1000,
+          "description": "Maximum size of a context pack (approximate tokens)."
+        },
+        "trishAI.maxFileSizeKB": {
+          "type": "number",
+          "default": 100,
+          "description": "Files larger than this get a skeleton but no AI summary."
+        },
+        "trishAI.concurrency": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Parallel summary requests."
+        },
+        "trishAI.writeLayer": {
+          "type": "string",
+          "enum": [
+            "local",
+            "shared"
+          ],
+          "default": "local",
+          "enumDescriptions": [
+            "Write to .trishAI/local (git-ignored overlay). Use when CI maintains the shared index.",
+            "Write to .trishAI/shared (committed). Use if you maintain the index by hand without CI."
+          ],
+          "description": "Which index layer this machine writes to."
+        },
+        "trishAI.learning.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remember which files you change after asking Librarian, to rank them higher for similar tasks."
         }
       }
     },
@@ -106,17 +213,135 @@
       ],
       "view/title": [
         {
-          "command": "trishAICoverageView.refresh",
+          "command": "trishAI.indexWorkspace",
           "when": "view == trishAICoverageView",
-          "group": "navigation"
+          "group": "navigation@1"
         },
         {
           "command": "trishAI.askLibrarian",
           "when": "view == trishAICoverageView",
-          "group": "navigation"
+          "group": "navigation@2"
+        },
+        {
+          "command": "trishAICoverageView.refresh",
+          "when": "view == trishAICoverageView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "trishAI.showFeatures",
+          "when": "view == trishAICoverageView",
+          "group": "navigation@4"
         }
       ]
-    }
+    },
+    "chatParticipants": [
+      {
+        "id": "trishAI.librarian",
+        "name": "librarian",
+        "fullName": "Librarian",
+        "description": "Answer using the pre-built codebase index (fewer tokens than attaching files)",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "context",
+            "description": "Build the context pack only — no model call"
+          },
+          {
+            "name": "related",
+            "description": "Imports, importers and co-changed files for a path"
+          },
+          {
+            "name": "status",
+            "description": "Index coverage, freshness and estimated savings"
+          }
+        ]
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "librarian_findRelevantFiles",
+        "toolReferenceName": "librarianFind",
+        "displayName": "Librarian: Find Relevant Files",
+        "icon": "$(book)",
+        "userDescription": "Find the files relevant to a task using the codebase index.",
+        "modelDescription": "Call this FIRST for any coding task in this repository, before reading source files. Given a natural-language task, returns the most relevant files with their exported signatures and short summaries (from a pre-built index), ranked using text match, the import graph and files changed in similar past tasks. Much cheaper than reading files.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "librarian",
+          "codebase",
+          "context"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string",
+              "description": "The task, in the user's words plus any identifiers you know."
+            },
+            "maxTokens": {
+              "type": "number",
+              "description": "Token budget for the result (default 6000)."
+            }
+          },
+          "required": [
+            "task"
+          ]
+        }
+      },
+      {
+        "name": "librarian_getSkeleton",
+        "toolReferenceName": "librarianSkeleton",
+        "displayName": "Librarian: Get File Skeleton",
+        "icon": "$(symbol-interface)",
+        "userDescription": "Show a file's exported API and summary without reading it.",
+        "modelDescription": "Returns the exported API (signatures) and summary of one or more files from the index without reading the full source. Use instead of reading a file when you only need to know what it exports or how to call it.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "librarian",
+          "codebase"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Workspace-relative file paths."
+            }
+          },
+          "required": [
+            "paths"
+          ]
+        }
+      },
+      {
+        "name": "librarian_getRelatedFiles",
+        "toolReferenceName": "librarianRelated",
+        "displayName": "Librarian: Get Related Files",
+        "icon": "$(references)",
+        "userDescription": "Show imports, importers and co-changed files.",
+        "modelDescription": "Shows which files a file imports, which files import it, and which files were usually changed together with it in past tasks. Use before changing a file's exports or when looking for the call sites of a module.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "librarian",
+          "codebase"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Workspace-relative file path."
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",
@@ -127,10 +352,13 @@
     "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "pretest": "pnpm run compile",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "pnpm run test:core",
+    "test:core": "tsc -p . --outDir out && node --test \"out/test/core/**/*.test.js\"",
+    "test:vscode": "tsc -p . --outDir out && vscode-test",
+    "librarian": "node dist/cli.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.134.0",
@@ -150,5 +378,8 @@
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"
+  },
+  "bin": {
+    "librarian": "./dist/cli.js"
   }
 }
