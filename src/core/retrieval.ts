@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import { IndexView, ResolvedEntry } from './indexStore';
+import { NoteHit, NoteStore } from './notes';
 import { stripFence } from './indexer';
 import { TaskMemory, TaskRecord } from './taskMemory';
 import { absFromRel, estimateTokens, hashText, tokenize } from './util';
@@ -108,6 +109,8 @@ export interface RetrieveOptions {
   maxRelated?: number;
   /** Restrict which remembered tasks may influence ranking (used for leave-one-out evaluation). */
   memoryFilter?: (t: TaskRecord) => boolean;
+  /** Extra per-file boosts (e.g. files mentioned in saved notes). */
+  extraBoosts?: Map<string, { score: number; because: string }>;
 }
 
 export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory, task: string, opts: RetrieveOptions = {}): Candidate[] {
@@ -144,6 +147,11 @@ export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory
   }
 
   for (const [p, b] of memory.boosts(task, opts.memoryFilter)) {
+    if (view.resolve(p)) {
+      add(p, b.score, b.because);
+    }
+  }
+  for (const [p, b] of opts.extraBoosts ?? []) {
     if (view.resolve(p)) {
       add(p, b.score, b.because);
     }
@@ -203,7 +211,7 @@ export interface BuiltPrompt {
  * Assemble a context pack within a token budget: highest-ranked files get summary + skeleton,
  * lower ones skeleton only, the rest are listed by path with the reason they matter.
  */
-export function buildPrompt(view: IndexView, task: string, cands: Candidate[], totalIndexed: number, budget = 6000): BuiltPrompt {
+export function buildPrompt(view: IndexView, task: string, cands: Candidate[], totalIndexed: number, budget = 6000, notes: NoteHit[] = []): BuiltPrompt {
   const head = [
     '# Librarian context pack',
     '',
@@ -221,6 +229,20 @@ export function buildPrompt(view: IndexView, task: string, cands: Candidate[], t
   const listed: string[] = [];
   let used = estimateTokens(head);
   let full = 0;
+
+  // Saved context from earlier chats comes first: decisions and constraints matter more than signatures.
+  const noteParts: string[] = [];
+  const noteBudget = Math.floor(budget * 0.3);
+  let noteUsed = 0;
+  for (const h of notes) {
+    const text = NoteStore.render(h.note, h.layer);
+    const t = estimateTokens(text);
+    if (noteUsed + t <= noteBudget) {
+      noteParts.push(text);
+      noteUsed += t;
+    }
+  }
+  used += noteUsed;
 
   for (const c of cands) {
     full += c.entry.record.sourceTokens;
@@ -242,6 +264,9 @@ export function buildPrompt(view: IndexView, task: string, cands: Candidate[], t
   }
 
   const parts = [head];
+  if (noteParts.length) {
+    parts.push('## Saved context from earlier chats', ...noteParts);
+  }
   if (sections.length === 0 && listed.length === 0) {
     parts.push('## Files', '_No indexed file matched this task. Index more of the codebase, or describe the task using names from the code._');
   } else {

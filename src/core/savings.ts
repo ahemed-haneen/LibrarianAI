@@ -112,6 +112,7 @@ export async function estimateSavings(lib: Librarian, opts: SavingsOptions = {})
     const pack = lib.findRelevant(c.task, {
       budget: opts.budget,
       track: false,
+      useNotes: false,
       memoryFilter: (t) => (c.ref ? t.ref !== c.ref : t.id !== c.id) && t.task !== c.task,
     });
     const inPack = new Set(pack.files.map((f) => f.path));

@@ -19,7 +19,8 @@ it gets better at picking files the more you use it.
 | Task memory | Learns which files you actually change for which kind of task | Free |
 | Setup page | Choose provider and exact model; nothing runs until you save | Free |
 | Savings estimate | Replays your own history to measure tokens saved and recall | Free |
-| Copilot tools | `#librarianFind`, `#librarianSkeleton`, `#librarianRelated` in agent mode | Free (the tool itself) |
+| Copilot tools | `#librarianFind`, `#librarianSkeleton`, `#librarianRelated`, `#librarianSave`, `#librarianNotes` in agent mode | Free (the tool itself) |
+| Saved chat context | Save a chat's goal, decisions and status. Related future chats get it automatically. | Free, or one request to condense |
 | `@librarian` | Chat participant using your selected Copilot model with a compact pack | One normal chat request |
 | Context packs | Budgeted prompt you can paste into any AI | Free |
 | Firm-wide CI index | Shared index rebuilt on each merge, pulled by everyone | One summary per changed API, firm-wide |
@@ -118,6 +119,28 @@ it gets better at picking files the more you use it.
 - In VS Code it counts with **your chosen model's own tokenizer** (no chat request is made). Otherwise it uses a ~4 chars/token estimate.
 - Not counted: fewer back-and-forth turns, which is often the larger saving on request-metered plans. Small repositories show small savings.
 
+### Saved chat context (notes)
+Save what a conversation established (goal, decisions and why, constraints, what was rejected,
+status, next steps) and reuse it in later chats instead of explaining it again.
+
+| Where you are | How to save |
+|---|---|
+| Copilot **agent mode** chat | Say *"save this to librarian memory"* or type `#librarianSave`. Copilot writes the summary from the full conversation; you confirm before it's stored. |
+| `@librarian` chat | `@librarian /save` summarises the conversation (one request to the chat's model). `@librarian /save <text>` stores your text as is. |
+| Any other chat, or an old one | **Copy All** in the chat → **Librarian: Save Note to Memory** → *From clipboard*. Long text can be condensed with your chosen model. |
+| Editor | Select text → right-click → **Save Note to Memory**. |
+| Terminal / CI | `librarian note "<title>" --summary "<text>" --files a.ts,b.ts` |
+
+- **Reused automatically:** relevant notes are added to context packs under *Saved context from earlier
+  chats* (up to 30% of the budget), and the files they mention rank higher. Ask explicitly with
+  `#librarianNotes`, `@librarian /notes <query>` or `librarian notes <query>`.
+- **Not a code change:** notes are kept apart from task memory. They never count as files you changed,
+  and they live in the git-ignored `.trishAI/local/notes.json`, so they don't show up in `git status`.
+- **Updates, not duplicates:** saving again with the same title replaces that note.
+- **Team sharing (optional):** **Manage Saved Notes → Share with team** moves a note to
+  `.trishAI/shared/notes.json`. Commit that file to share it (this one *is* a git change, on purpose).
+- Turn off with `trishAI.notes.enabled`.
+
 ### Visibility
 - Sidebar **AI Readiness %** counts only *fresh* entries; per-folder `ready/total`.
 - Per-file state: **Skeleton + Summary**, **Skeleton**, **Stale**, **Unmapped**.
@@ -180,6 +203,7 @@ what your firm's plan actually meters.
 | `trishAI.writeLayer` | `local` | `local` overlay, or `shared` if you maintain the index without CI |
 | `trishAI.learning.enabled` | `true` | Record edits after Librarian requests |
 | `trishAI.costPerMillionTokens` | `0` | Optional price for an indicative cost in the savings estimate |
+| `trishAI.notes.enabled` | `true` | Include relevant saved notes in context packs |
 
 ---
 
@@ -187,6 +211,8 @@ what your firm's plan actually meters.
 
 | Command | What it does |
 |---|---|
+| Librarian: Save Note to Memory (chat context) | Save context from the clipboard, a selection or typed text |
+| Librarian: Manage Saved Notes | Open, share with team, or delete notes |
 | Librarian: Open Setup (choose model) | First-run page: provider and exact model. Opens automatically until you choose. |
 | Librarian: Estimate Token Savings | Replays your git history and sessions; opens a report |
 | Librarian: Index Workspace | Incremental index of everything (only changed files cost anything) |

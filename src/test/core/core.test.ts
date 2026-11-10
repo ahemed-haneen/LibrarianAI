@@ -300,3 +300,60 @@ describe('savings estimate', () => {
     assert.strictEqual(lib.view.layers.local.stats().promptsBuilt, before, 'estimates do not pollute usage stats');
   });
 });
+
+describe('saved notes (chat context memory)', () => {
+  test('save, update by title, search, and stay out of task memory', async () => {
+    const root = tmpRepo({
+      'src/auth/login.ts': `export function login(user: string, password: string): Promise<Session> { return null as any; }`,
+      'src/auth/rateLimit.ts': `export function limit(key: string): boolean { return true; }`,
+      'src/ui/button.ts': `export function Button(label: string): Element { return null as any; }`,
+    });
+    await runIndex({ root, layer: 'local' });
+    const lib = new Librarian(root);
+
+    const saveTool = TOOL_DEFS.find((t) => t.name === 'librarian_saveNote')!;
+    const out = saveTool.run(lib, {
+      title: 'Login rate limiting',
+      summary: 'Decided: 5 attempts per minute per IP using a sliding window in rateLimit.ts. Return 429 with Retry-After. Redis rejected (no infra).',
+      files: ['src/auth/rateLimit.ts', './src/auth/login.ts'],
+    });
+    assert.match(out.text, /Saved note "Login rate limiting"/);
+    assert.ok(saveTool.confirm, 'write tool asks for confirmation');
+
+    // Same title updates instead of duplicating.
+    lib.notes.save({ title: 'login rate limiting', summary: 'Update: limit raised to 10 attempts per minute.', source: 'chat' });
+    assert.strictEqual(lib.notes.all().length, 1);
+    assert.match(lib.notes.all()[0].note.summary, /10 attempts/);
+    assert.deepStrictEqual(lib.notes.all()[0].note.files, ['src/auth/rateLimit.ts', 'src/auth/login.ts']);
+
+    // Notes are knowledge, not edits.
+    assert.strictEqual(lib.memory.all().length, 0);
+    assert.ok(!fs.existsSync(path.join(root, '.trishAI/shared/notes.json')), 'personal notes stay in the git-ignored layer');
+
+    // Reused automatically in a related task, with its files boosted.
+    const pack = lib.findRelevant('tweak the login attempt limit');
+    assert.match(pack.prompt, /## Saved context from earlier chats/);
+    assert.match(pack.prompt, /10 attempts per minute/);
+    assert.ok(pack.files.some((f) => f.path === 'src/auth/rateLimit.ts' && f.reasons.some((r) => r.includes('saved note'))));
+
+    // Unrelated task: no note.
+    assert.doesNotMatch(lib.findRelevant('make the button blue').prompt, /Saved context/);
+
+    // Recall tool and sharing.
+    const recall = TOOL_DEFS.find((t) => t.name === 'librarian_recallNotes')!.run(lib, { query: 'what did we decide about rate limiting' });
+    assert.match(recall.text, /Login rate limiting/);
+    const id = lib.notes.all()[0].note.id;
+    assert.ok(lib.notes.share(id));
+    assert.strictEqual(lib.notes.all()[0].layer, 'shared');
+    assert.ok(lib.notes.remove(id));
+    assert.strictEqual(lib.notes.all().length, 0);
+  });
+
+  test('notes can be switched off', async () => {
+    const root = tmpRepo({ 'src/a.ts': `export function payInvoice(id: string): void {}` });
+    await runIndex({ root, layer: 'local' });
+    new Librarian(root).notes.save({ title: 'Invoice payments', summary: 'Use the ledger API for invoice payments.' });
+    assert.doesNotMatch(new Librarian(root, 'onApiChange', false).findRelevant('pay invoice').prompt, /Saved context/);
+    assert.match(new Librarian(root).findRelevant('pay invoice').prompt, /ledger API/);
+  });
+});

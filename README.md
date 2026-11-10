@@ -29,7 +29,10 @@ You keep working in Copilot Chat. Librarian runs alongside it:
 3. **Librarian: Estimate Token Savings** shows what your own history says you'd save.
 4. Run **Librarian: Install Copilot Instructions** and commit the file.
 5. Optional: **Librarian: Index Workspace** (AI summaries) and **Learn from Recent Commits** (task memory).
-6. Work as usual in Copilot agent mode, or ask `@librarian`.
+6. Work as usual in Copilot agent mode, or ask `@librarian`. To keep a chat's context for later, say
+   *"save this to librarian memory"* (`#librarianSave`).
+
+Testing it on a real repository: **[docs/TESTING.md](docs/TESTING.md)**.
 
 For the firm-wide setup see **[docs/CI.md](docs/CI.md)**.
 
@@ -49,6 +52,7 @@ src/
     llm.ts                   Anthropic, GitHub Models / OpenAI-compatible clients
     savings.ts               token-savings estimate replayed on git history
     modelHints.ts            low-cost / premium hint from a model's name
+    notes.ts                 saved chat context (personal / team)
     copilotInstructions.ts   managed block in .github/copilot-instructions.md
   vscode/
     copilotLlm.ts            vscode.lm (your Copilot), only the exact model you chose

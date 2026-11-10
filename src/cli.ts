@@ -10,11 +10,12 @@ import { runIndex } from './core/indexer';
 import { Librarian } from './core/librarian';
 import { AnthropicClient, GITHUB_MODELS_URL, LlmClient, OpenAICompatibleClient } from './core/llm';
 import { runMcpServer } from './core/mcpServer';
+import { NoteStore } from './core/notes';
 import { estimateSavings } from './core/savings';
 import { changedSince } from './core/sourceFiles';
 import { learnFromGit } from './core/taskMemory';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 const HELP = `librarian ${VERSION}
 
@@ -26,6 +27,8 @@ Commands
   query      Print the context pack for a task
   status     Show index coverage and freshness
   estimate   Estimate token savings by replaying past tasks from git history
+  notes      List/search saved notes:  notes [query]
+  note       Save a note:              note "<title>" --summary "<text>" [--files a.ts,b.ts] [--layer shared]
   mcp        Run as an MCP server on stdio
   install-instructions   Add/refresh the Librarian block in .github/copilot-instructions.md
 
@@ -195,6 +198,25 @@ async function main(): Promise<number> {
         costPerMillionTokens: str(flags.price) ? Number(str(flags.price)) : undefined,
       });
       console.log(r.markdown);
+      return 0;
+    }
+    case 'notes': {
+      const lib = new Librarian(root);
+      const q = rest.join(' ').trim();
+      const hits = q ? lib.notes.search(q, 10, 0.05) : lib.notes.all().slice(0, 20);
+      console.log(hits.length ? hits.map((h) => NoteStore.render(h.note, h.layer)).join('\n') : 'No saved notes.');
+      return 0;
+    }
+    case 'note': {
+      const title = rest.join(' ').trim();
+      const summary = str(flags.summary);
+      if (!title || !summary) {
+        console.error('Usage: librarian note "<title>" --summary "<text>" [--files a.ts,b.ts] [--layer local|shared]');
+        return 2;
+      }
+      const files = (str(flags.files) ?? '').split(',').filter(Boolean);
+      const r = new Librarian(root).notes.save({ title, summary, files, source: 'manual' }, (str(flags.layer) ?? 'local') as LayerName);
+      console.log(`${r.updated ? 'Updated' : 'Saved'} note ${r.note.id}: ${r.note.title}`);
       return 0;
     }
     case 'status':

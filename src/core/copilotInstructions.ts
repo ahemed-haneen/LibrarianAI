@@ -19,6 +19,10 @@ and purpose. Use it to keep context small and avoid unnecessary file reads.
    instead of the full source where signatures are enough.
 5. Open full source files only for the parts you need to edit or whose implementation matters.
 6. Entries marked "stale" may be outdated: confirm against the source before relying on them.
+7. When the user asks to **save / remember this chat or task**, call \`#librarianSave\` with a short title and a
+   summary you write from the conversation (goal, decisions and why, constraints, status, next steps, files involved).
+8. When the user refers to earlier work ("what did we decide…", "continue the … task"), call \`#librarianNotes\`.
+   Relevant saved notes are also included automatically in \`#librarianFind\` results.
 ${END}`;
 
 /** Insert or update the Librarian block in .github/copilot-instructions.md, keeping user content. */

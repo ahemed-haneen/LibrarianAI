@@ -1,5 +1,11 @@
 # Change Log
 
+## [0.3.0]
+
+### Added
+- **Saved chat context (notes):** `#librarianSave` / `#librarianNotes` tools for Copilot agent mode, `@librarian /save` and `/notes`, **Save Note to Memory** (clipboard, selection or typed; optional condensing with your chosen model), **Manage Saved Notes** (open, share with team, delete), and `librarian note` / `librarian notes` in the CLI. Relevant notes are added to context packs automatically and boost the files they mention. Notes are kept separate from task memory and stored in the git-ignored local layer.
+- "Run Extension on a repository…" debug configuration.
+
 ## [0.2.0]
 
 ### Added

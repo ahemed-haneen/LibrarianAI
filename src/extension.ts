@@ -5,6 +5,7 @@ import { IndexResult, runIndex } from './core/indexer';
 import { Librarian } from './core/librarian';
 import { AnthropicClient, LlmClient } from './core/llm';
 import { isSourcePath, listSourceFiles } from './core/sourceFiles';
+import { NoteStore } from './core/notes';
 import { learnFromGit } from './core/taskMemory';
 import { relPosix } from './core/util';
 import { CoverageNode, CoverageTreeProvider } from './coverageTreeProvider';
@@ -73,7 +74,7 @@ export function activate(context: vscode.ExtensionContext) {
   const layer = () => cfg().get<LayerName>('writeLayer', 'local');
   const budget = () => cfg().get<number>('promptTokenBudget', 6000);
 
-  let librarian: Librarian | undefined = root ? new Librarian(root, policy()) : undefined;
+  let librarian: Librarian | undefined = root ? new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true)) : undefined;
   const lib = () => librarian;
   const tracker = root && librarian ? new TaskTracker(root, librarian.memory, () => cfg().get<boolean>('learning.enabled', true)) : undefined;
 
@@ -129,7 +130,7 @@ export function activate(context: vscode.ExtensionContext) {
         });
       }
     );
-    librarian = new Librarian(root, policy());
+    librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
     refreshTree();
     if (opts.silent && !result.errors.length) {
       return;
@@ -228,13 +229,124 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (err) {
         vscode.window.showErrorMessage(`Could not read git history: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
       }
-      librarian = new Librarian(root, policy());
+      librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
     }),
 
     vscode.commands.registerCommand('trishAI.showStatus', () => {
       if (librarian) {
         vscode.window.showInformationMessage(librarian.status().text.replace(/\n/g, ' · '), { modal: false });
       }
+    }),
+
+    vscode.commands.registerCommand('trishAI.saveNote', async () => {
+      if (!librarian) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      const editor = vscode.window.activeTextEditor;
+      const selection = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection) : '';
+      const source = await vscode.window.showQuickPick(
+        [
+          { label: '$(clippy) From clipboard', detail: 'Use “Copy All” in a chat (right-click the chat), then pick this', id: 'clip' },
+          ...(selection ? [{ label: '$(selection) From editor selection', detail: `${selection.length.toLocaleString()} characters selected`, id: 'sel' }] : []),
+          { label: '$(edit) Type it', detail: 'Write the decision, constraint or status to remember', id: 'type' },
+        ],
+        { title: 'Save context to Librarian memory', placeHolder: 'Where is the context?' }
+      );
+      if (!source) {
+        return;
+      }
+      let text = source.id === 'clip' ? await vscode.env.clipboard.readText() : source.id === 'sel' ? selection : (await vscode.window.showInputBox({ prompt: 'What should future chats know?', ignoreFocusOut: true })) ?? '';
+      text = text.trim();
+      if (!text) {
+        vscode.window.showWarningMessage(source.id === 'clip' ? 'The clipboard is empty. Use “Copy All” in the chat first.' : 'Nothing to save.');
+        return;
+      }
+      let title = text.split('\n').find((l) => l.trim())!.replace(/^[#>*\-\s]+/, '').slice(0, 80);
+      let files: string[] = [];
+      if (text.length > 2500) {
+        const made = await makeLlm(context);
+        const label = 'error' in made ? undefined : made.label;
+        const choice = await vscode.window.showQuickPick(
+          [
+            ...(label ? [{ label: `$(sparkle) Condense with ${label}`, detail: 'One request to the model you chose in Setup', id: 'condense' }] : []),
+            { label: '$(save) Save as is', detail: 'Long notes take more of the context budget when reused', id: 'raw' },
+            ...(!label ? [{ label: '$(gear) Choose a model first…', detail: 'Open Librarian Setup', id: 'setup' }] : []),
+          ],
+          { title: `This text is long (${text.length.toLocaleString()} characters)` }
+        );
+        if (!choice) {
+          return;
+        }
+        if (choice.id === 'setup') {
+          SetupPanel.show(context, refreshTree);
+          return;
+        }
+        if (choice.id === 'condense' && !('error' in made)) {
+          const out = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Librarian: condensing…' }, () =>
+            made.complete(
+              `Condense this conversation/context into a note a future AI chat can reuse to continue the work.\n` +
+                `Reply exactly:\nTITLE: <short specific title>\nFILES: <comma-separated workspace-relative paths, or none>\nSUMMARY:\n` +
+                `<markdown under 250 words: goal, decisions and why, constraints, tried/rejected, status, next steps>\n\n---\n${text.slice(-30000)}`
+            )
+          );
+          title = /TITLE:\s*(.+)/i.exec(out)?.[1]?.trim() || title;
+          files = (/FILES:\s*(.+)/i.exec(out)?.[1] ?? '').split(',').map((f) => f.trim().replace(/^`|`$/g, '')).filter((f) => f && f.toLowerCase() !== 'none');
+          text = (/SUMMARY:\s*([\s\S]+)/i.exec(out)?.[1] ?? out).trim();
+        }
+      }
+      const finalTitle = await vscode.window.showInputBox({ prompt: 'Title (saving with an existing title updates that note)', value: title, ignoreFocusOut: true });
+      if (!finalTitle) {
+        return;
+      }
+      const { note, updated } = librarian.notes.save({ title: finalTitle, summary: text, files, source: 'manual' });
+      vscode.window.showInformationMessage(`${updated ? 'Updated' : 'Saved'} note “${note.title}”. Related future tasks will include it automatically.`);
+      refreshTree();
+    }),
+
+    vscode.commands.registerCommand('trishAI.manageNotes', async () => {
+      if (!librarian) {
+        return;
+      }
+      const notes = librarian.notes.all();
+      if (!notes.length) {
+        vscode.window.showInformationMessage('No saved notes yet. Use “Librarian: Save Note to Memory”, @librarian /save, or #librarianSave in agent mode.');
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        notes.map(({ note, layer }) => ({
+          label: note.title,
+          description: `${layer === 'shared' ? '$(organization) team' : '$(person) personal'} · ${note.updatedAt.slice(0, 10)}`,
+          detail: note.summary.replace(/\s+/g, ' ').slice(0, 140),
+          note,
+          layer,
+        })),
+        { title: 'Saved notes', matchOnDetail: true }
+      );
+      if (!pick) {
+        return;
+      }
+      const action = await vscode.window.showQuickPick(
+        [
+          { label: '$(open-preview) Open', id: 'open' },
+          ...(pick.layer === 'local' ? [{ label: '$(organization) Share with team', detail: 'Moves it to .trishAI/shared (committed with the repo)', id: 'share' }] : []),
+          { label: '$(trash) Delete', id: 'delete' },
+        ],
+        { title: pick.note.title }
+      );
+      if (action?.id === 'open') {
+        const doc = await vscode.workspace.openTextDocument({ content: NoteStore.render(pick.note, pick.layer), language: 'markdown' });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      } else if (action?.id === 'share') {
+        librarian.notes.share(pick.note.id);
+        vscode.window.showInformationMessage(`“${pick.note.title}” moved to the shared layer. Commit .trishAI/shared/notes.json to share it.`);
+      } else if (action?.id === 'delete') {
+        const ok = await vscode.window.showWarningMessage(`Delete “${pick.note.title}”?`, { modal: true }, 'Delete');
+        if (ok) {
+          librarian.notes.remove(pick.note.id);
+        }
+      }
+      refreshTree();
     }),
 
     vscode.commands.registerCommand('trishAI.openSetup', () => SetupPanel.show(context, refreshTree)),
@@ -248,7 +360,7 @@ export function activate(context: vscode.ExtensionContext) {
         { location: vscode.ProgressLocation.Notification, title: 'Librarian: estimating token savings from your history…' },
         async () => {
           await runIndex({ root, layer: layer(), policy: policy() }); // free: makes sure skeletons are current
-          librarian = new Librarian(root, policy());
+          librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
           // Use the chosen model's own tokenizer when there is one (counting does not send a chat request).
           let count: ((t: string) => Promise<number>) | undefined;
           let tokenizerLabel: string | undefined;
@@ -306,7 +418,7 @@ export function activate(context: vscode.ExtensionContext) {
     { dispose: () => clearTimeout(timer) },
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (root && e.affectsConfiguration('trishAI')) {
-        librarian = new Librarian(root, policy());
+        librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
         refreshTree();
       }
     })

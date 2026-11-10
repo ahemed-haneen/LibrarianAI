@@ -2,7 +2,7 @@
   "name": "trinet-ai-smart-assist",
   "displayName": "TrishAI",
   "description": "Librarian: a codebase index that makes GitHub Copilot (and other AI agents) use fewer tokens and fewer turns — and gets smarter as you use it.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.134.0"
   },
@@ -98,6 +98,16 @@
         "command": "trishAI.showFeatures",
         "title": "Librarian: Show Features",
         "icon": "$(info)"
+      },
+      {
+        "command": "trishAI.saveNote",
+        "title": "Librarian: Save Note to Memory (chat context)",
+        "icon": "$(save)"
+      },
+      {
+        "command": "trishAI.manageNotes",
+        "title": "Librarian: Manage Saved Notes",
+        "icon": "$(notebook)"
       }
     ],
     "configuration": {
@@ -198,6 +208,11 @@
           "default": 0,
           "minimum": 0,
           "markdownDescription": "Optional input price (USD per 1M tokens) to show an indicative cost in **Librarian: Estimate Token Savings**. 0 hides it."
+        },
+        "trishAI.notes.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include relevant saved notes from earlier chats in context packs."
         }
       }
     },
@@ -244,6 +259,18 @@
           "command": "trishAI.openSetup",
           "when": "view == trishAICoverageView",
           "group": "navigation@5"
+        },
+        {
+          "command": "trishAI.saveNote",
+          "when": "view == trishAICoverageView",
+          "group": "navigation@6"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "trishAI.saveNote",
+          "when": "editorHasSelection",
+          "group": "9_librarian"
         }
       ]
     },
@@ -266,6 +293,14 @@
           {
             "name": "status",
             "description": "Index coverage, freshness and estimated savings"
+          },
+          {
+            "name": "save",
+            "description": "Summarise this conversation into a saved note for future chats"
+          },
+          {
+            "name": "notes",
+            "description": "List or search saved notes"
           }
         ]
       }
@@ -351,6 +386,68 @@
           },
           "required": [
             "path"
+          ]
+        }
+      },
+      {
+        "name": "librarian_saveNote",
+        "toolReferenceName": "librarianSave",
+        "displayName": "Librarian: Save Chat Context to Memory",
+        "icon": "$(save)",
+        "userDescription": "Summarise this conversation and save it to Librarian memory for future chats.",
+        "modelDescription": "Saves the context of the current conversation to Librarian memory so future chats can reuse it. Call this when the user asks to save, remember or store this chat/task/context. Write the summary yourself from the conversation: goal, key decisions and why, constraints, what was tried and rejected, current status and next steps — concise markdown, under 300 words, no code dumps. Saving again with the same title updates the note. Notes are knowledge, not code changes.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "librarian",
+          "memory"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Short, specific title, e.g. \"Rate limiting for login endpoint\"."
+            },
+            "summary": {
+              "type": "string",
+              "description": "Markdown summary: goal, decisions, constraints, status, next steps."
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Workspace-relative files the conversation was about."
+            }
+          },
+          "required": [
+            "title",
+            "summary"
+          ]
+        }
+      },
+      {
+        "name": "librarian_recallNotes",
+        "toolReferenceName": "librarianNotes",
+        "displayName": "Librarian: Recall Saved Notes",
+        "icon": "$(history)",
+        "userDescription": "Search context saved from earlier chats.",
+        "modelDescription": "Searches notes saved from earlier conversations (decisions, constraints, status of past tasks). Use when the user refers to earlier work (\"what did we decide about…\", \"continue the … task\") or before re-designing something that may have been discussed.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "librarian",
+          "memory"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "What to look for."
+            }
+          },
+          "required": [
+            "query"
           ]
         }
       }

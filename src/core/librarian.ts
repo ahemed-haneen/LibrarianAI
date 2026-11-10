@@ -3,6 +3,7 @@ import { ContextPolicy, IndexView } from './indexStore';
 import { stripFence } from './indexer';
 import { buildPrompt, BuiltPrompt, markFreshness, retrieve, SearchIndex } from './retrieval';
 import { listSourceFiles } from './sourceFiles';
+import { NoteStore } from './notes';
 import { TaskMemory, TaskRecord } from './taskMemory';
 import { absFromRel, hashText } from './util';
 
@@ -14,6 +15,8 @@ export interface FindOptions {
   /** Count this pack in the usage stats (default true; off for estimates). */
   track?: boolean;
   memoryFilter?: (t: TaskRecord) => boolean;
+  /** Include saved notes (default true; off for the savings estimate, which replays code changes). */
+  useNotes?: boolean;
 }
 
 export interface FindResult extends BuiltPrompt {
@@ -27,18 +30,25 @@ export interface FindResult extends BuiltPrompt {
 export class Librarian {
   readonly view: IndexView;
   readonly memory: TaskMemory;
+  readonly notes: NoteStore;
   private search: SearchIndex;
 
-  constructor(readonly root: string, policy: ContextPolicy = 'onApiChange') {
+  constructor(readonly root: string, policy: ContextPolicy = 'onApiChange', private notesEnabled = true) {
     this.view = new IndexView(root, policy);
     this.memory = new TaskMemory(root);
+    this.notes = new NoteStore(root);
     this.search = new SearchIndex(this.view);
   }
 
   findRelevant(task: string, opts: FindOptions = {}): FindResult {
-    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles, memoryFilter: opts.memoryFilter });
+    const noteHits = (opts.useNotes ?? this.notesEnabled) ? this.notes.search(task, 3) : [];
+    const extraBoosts = new Map<string, { score: number; because: string }>();
+    for (const h of noteHits) {
+      h.note.files.forEach((f) => extraBoosts.set(f, { score: 2 + h.score * 4, because: `in saved note “${h.note.title.slice(0, 50)}”` }));
+    }
+    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles, memoryFilter: opts.memoryFilter, extraBoosts });
     markFreshness(this.root, this.view, cands);
-    const built = buildPrompt(this.view, task, cands, this.search.size, opts.budget);
+    const built = buildPrompt(this.view, task, cands, this.search.size, opts.budget, noteHits);
     if (opts.track !== false) {
       this.view.layers.local.bumpStats({ promptsBuilt: 1, estTokensDelivered: built.deliveredTokens, estTokensIfFullFiles: built.fullFileTokens });
     }
@@ -121,7 +131,7 @@ export class Librarian {
       `Source files: ${files.length}`,
       `Indexed: ${indexed} (fresh ${fresh}, stale ${indexed - fresh})`,
       `AI summaries: ${withContext} fresh, ${staleContext} stale`,
-      `Remembered tasks: ${this.memory.all().length}`,
+      `Remembered tasks: ${this.memory.all().length} · saved notes: ${this.notes.all().length}`,
       `Context packs built: ${s.promptsBuilt} · est. tokens saved vs. full files: ${saved.toLocaleString()}`,
     ].join('\n');
     return { total: files.length, indexed, fresh, withContext, staleContext, text };
