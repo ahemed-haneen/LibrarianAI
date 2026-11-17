@@ -149,7 +149,7 @@ status, next steps) and reuse it in later chats instead of explaining it again.
 | Where you are | How to save |
 |---|---|
 | Copilot **agent mode** chat | Say *"save this to librarian memory"* or type `#librarianSave`. Copilot writes the summary from the full conversation; you confirm before it's stored. |
-| Librarian agent or any chat with skills | `/librarian-save` summarises the conversation and saves it (you confirm first). |
+| Librarian agent or any chat with skills | `/librarian-save` summarises the conversation and saves it (you confirm first). The Librarian agent also offers this once when a substantial task is finished. |
 | Any other chat, or an old one | **Copy All** in the chat → **Librarian: Save Note to Memory** → *From clipboard*. Long text can be condensed with your chosen model. |
 | Editor | Select text → right-click → **Save Note to Memory**. |
 | Terminal / CI | `librarian note "<title>" --summary "<text>" --files a.ts,b.ts` |
@@ -165,7 +165,9 @@ status, next steps) and reuse it in later chats instead of explaining it again.
 - Turn off with `trishAI.notes.enabled`.
 
 ### Visibility
-- Sidebar **AI Readiness %** counts only *fresh* entries; per-folder `ready/total`.
+- Sidebar shows two separate measures: **Skeletons %** (the free signature index; counts only *fresh* entries) and **AI summaries %**
+  (files with an up-to-date summary, plus how many are outdated). Click the summaries row to run Index Workspace, or to open Setup if no model
+  is chosen yet. Folders show `ready/total` and, once summaries exist, how many are summarised.
 - Per-file state: **Skeleton + Summary**, **Skeleton**, **Stale**, **Unmapped**.
 - **Estimated tokens saved**: full-file tokens of the files Librarian pointed to, minus the
   tokens it actually sent.

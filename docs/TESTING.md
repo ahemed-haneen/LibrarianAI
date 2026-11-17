@@ -39,8 +39,8 @@ Close the window and relaunch: the page should **not** reappear (reopen it with 
 
 Open the **book icon** in the activity bar (*TrishAI Context Tracker*).
 
-**Expect:** a few seconds after startup, *AI Readiness* climbs as skeletons are built (free, no
-model calls). Files show **Skeleton** (yellow). Folders show `ready/total`.
+**Expect:** a few seconds after startup, *Skeletons* climbs as they are built (free, no
+model calls); *AI summaries* stays at 0% until you run Index Workspace with a model chosen. Files show **Skeleton** (yellow). Folders show `ready/total`.
 - Edit and save any `.ts` file: it stays fresh (it's re-indexed on save).
 - Edit a file **without saving**, then **Refresh Coverage**: nothing changes. Then change the file on
   disk from a terminal (e.g. `echo "// x" >> src/foo.ts`) and refresh: it shows **Stale** (orange), and a

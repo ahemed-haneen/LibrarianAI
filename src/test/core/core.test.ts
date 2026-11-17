@@ -376,6 +376,7 @@ describe('copilot instructions', () => {
     const first = installLibrarianAgent(root);
     assert.strictEqual(first.created, 1 + SKILLS.length);
     assert.strictEqual(fs.readFileSync(path.join(root, '.github/agents/librarian.agent.md'), 'utf8'), AGENT_FILE);
+    assert.match(AGENT_FILE, /offer once[\s\S]*#librarianSave/, 'the agent offers to save a finished task to memory');
     for (const s of SKILLS) {
       const text = fs.readFileSync(path.join(root, '.github/skills', s.name, 'SKILL.md'), 'utf8');
       assert.match(text, /disable-model-invocation: true/);
