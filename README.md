@@ -42,6 +42,7 @@ For the firm-wide setup see **[docs/CI.md](docs/CI.md)**.
 src/
   core/                      VS Code–free; shared by extension, CLI, CI and MCP
     analyzer.ts              TypeScript-AST skeletons + import extraction
+    pythonAnalyzer.ts        Python skeletons, imports and import resolution (no interpreter needed)
     sourceFiles.ts           single "which files are indexed" rule (git ls-files aware)
     indexStore.ts            shared/local layers, manifest, freshness by content hash
     indexer.ts               incremental indexing; summaries only when the API changes

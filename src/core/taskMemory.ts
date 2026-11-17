@@ -117,31 +117,58 @@ export interface GitTask {
   task: string;
   files: string[];
   at: string;
+  /** Changed files Librarian does not index, counted by extension (e.g. { '.sql': 2 }). */
+  otherExts: Record<string, number>;
+}
+
+export type CommitSkipReason = 'ci-skip' | 'no-source-files' | 'too-many-files' | 'empty-message';
+
+export interface SkippedCommit {
+  ref: string;
+  task: string;
+  reason: CommitSkipReason;
+  /** Indexable files in the commit (too-many-files). */
+  fileCount?: number;
+  /** Changed files by extension (no-source-files): what kind of files these commits touch. */
+  extensions?: Record<string, number>;
+}
+
+function extensionTally(files: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of files) {
+    const key = path.extname(f).toLowerCase() || path.basename(f);
+    out[key] = (out[key] ?? 0) + 1;
+  }
+  return out;
 }
 
 /**
  * Read "task -> files changed" pairs from first-parent git history (squash-merges / merges of PRs).
  * @param spec `a..b` range, a single commit, or a number N meaning "the last N first-parent commits".
  */
-export function readGitTasks(root: string, spec: string): { tasks: GitTask[]; skipped: number } {
+export function readGitTasks(root: string, spec: string): { tasks: GitTask[]; skipped: number; skips: SkippedCommit[] } {
   const git = (args: string[]) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   const revArgs = spec.includes('..') ? [spec] : /^\d+$/.test(spec) ? ['-n', spec, 'HEAD'] : ['-1', spec];
   const shas = git(['rev-list', '--first-parent', ...revArgs]).split('\n').filter(Boolean);
   const tasks: GitTask[] = [];
+  const skips: SkippedCommit[] = [];
   let skipped = 0;
   for (const sha of shas.reverse()) {
     const msg = git(['show', '-s', '--format=%s%n%b', sha]).trim();
     if (/\[skip ci\]|\[librarian skip\]/i.test(msg)) {
       skipped++;
+      skips.push({ ref: sha, task: msg.split('\n')[0].slice(0, 120), reason: 'ci-skip' });
       continue;
     }
-    let files: string[];
+    let all: string[];
     try {
-      files = git(['diff', '--name-only', `${sha}^1`, sha]).split('\n').filter(isSourcePath);
+      all = git(['diff', '--name-only', `${sha}^1`, sha]).split('\n').filter(Boolean);
     } catch {
-      files = git(['show', '--name-only', '--format=', sha]).split('\n').filter(isSourcePath);
+      all = git(['show', '--name-only', '--format=', sha]).split('\n').filter(Boolean);
     }
+    const files = all.filter(isSourcePath);
+    const others = all.filter((f) => !isSourcePath(f));
     const task = msg
       .replace(/^Merge pull request #\d+ from \S+\s*/i, '')
       .replace(/^Merge branch .*$/im, '')
@@ -150,11 +177,19 @@ export function readGitTasks(root: string, spec: string): { tasks: GitTask[]; sk
       .slice(0, 800);
     if (files.length === 0 || files.length > MAX_FILES_PER_TASK || !task) {
       skipped++;
+      const subject = (task || msg).split('\n')[0].slice(0, 120);
+      if (files.length === 0) {
+        skips.push({ ref: sha, task: subject, reason: 'no-source-files', extensions: extensionTally(others) });
+      } else if (files.length > MAX_FILES_PER_TASK) {
+        skips.push({ ref: sha, task: subject, reason: 'too-many-files', fileCount: files.length });
+      } else {
+        skips.push({ ref: sha, task: subject, reason: 'empty-message' });
+      }
       continue;
     }
-    tasks.push({ ref: sha, task, files, at: git(['show', '-s', '--format=%cI', sha]).trim() });
+    tasks.push({ ref: sha, task, files, at: git(['show', '-s', '--format=%cI', sha]).trim(), otherExts: extensionTally(others) });
   }
-  return { tasks, skipped };
+  return { tasks, skipped, skips };
 }
 
 /**

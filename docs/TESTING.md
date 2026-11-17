@@ -15,7 +15,7 @@ code .
 ```
 
 In VS Code: **Run and Debug** (Ctrl/Cmd+Shift+D) → choose **Run Extension on a repository…** → F5 →
-paste the absolute path of the repo to test (a real TypeScript/JavaScript repo with some git history).
+paste the absolute path of the repo to test (a real TypeScript, JavaScript or Python repo with some git history).
 
 A second window, the *Extension Development Host*, opens on that repo with Librarian loaded.
 Your other extensions (Copilot included) load too. Logs and errors appear in the **first** window's

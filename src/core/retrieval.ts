@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import { IndexView, ResolvedEntry } from './indexStore';
 import { NoteHit, NoteStore } from './notes';
 import { stripFence } from './indexer';
+import { fenceLang, noExports } from './sourceFiles';
 import { TaskMemory, TaskRecord } from './taskMemory';
 import { absFromRel, estimateTokens, hashText, tokenize } from './util';
 
@@ -104,6 +105,10 @@ export class SearchIndex {
   }
 }
 
+/** How many files a pack can hold: strongest matches, then neighbours of the top three. */
+export const DEFAULT_MAX_FILES = 8;
+export const DEFAULT_MAX_RELATED = 6;
+
 export interface RetrieveOptions {
   maxFiles?: number;
   maxRelated?: number;
@@ -111,12 +116,14 @@ export interface RetrieveOptions {
   memoryFilter?: (t: TaskRecord) => boolean;
   /** Extra per-file boosts (e.g. files mentioned in saved notes). */
   extraBoosts?: Map<string, { score: number; because: string }>;
+  /** Receives the full ranking (every file with a positive score), for diagnostics. */
+  onRanked?: (ranked: [string, { score: number; reasons: string[] }][]) => void;
 }
 
 export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory, task: string, opts: RetrieveOptions = {}): Candidate[] {
   index.ensure();
-  const maxFiles = opts.maxFiles ?? 8;
-  const maxRelated = opts.maxRelated ?? 6;
+  const maxFiles = opts.maxFiles ?? DEFAULT_MAX_FILES;
+  const maxRelated = opts.maxRelated ?? DEFAULT_MAX_RELATED;
   const qTokens = tokenize(task);
   const taskLower = task.toLowerCase();
   const scores = new Map<string, { score: number; reasons: string[] }>();
@@ -162,6 +169,7 @@ export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory
   }
 
   const ranked = [...scores.entries()].sort((a, b) => b[1].score - a[1].score);
+  opts.onRanked?.(ranked);
   const primary: Candidate[] = ranked.slice(0, maxFiles).map(([p, s]) => ({
     path: p, score: s.score, reasons: s.reasons, entry: view.resolve(p)!, role: 'primary',
   }));
@@ -251,8 +259,8 @@ export function buildPrompt(view: IndexView, task: string, cands: Candidate[], t
     const flag = c.entry.skeletonFresh ? '' : ' ⚠ stale';
     const why = c.reasons.slice(0, 2).join('; ');
     const title = `### \`${c.path}\`${flag}\n_${c.role === 'related' ? 'Related — ' : ''}${why}_\n`;
-    const withCtx = `${title}\n${ctx ? ctx + '\n\n' : ''}\`\`\`typescript\n${skeleton || '// (no exports)'}\n\`\`\`\n`;
-    const skelOnly = `${title}\n\`\`\`typescript\n${skeleton || '// (no exports)'}\n\`\`\`\n`;
+    const withCtx = `${title}\n${ctx ? ctx + '\n\n' : ''}\`\`\`${fenceLang(c.path)}\n${skeleton || noExports(c.path)}\n\`\`\`\n`;
+    const skelOnly = `${title}\n\`\`\`${fenceLang(c.path)}\n${skeleton || noExports(c.path)}\n\`\`\`\n`;
     const options = c.role === 'primary' ? [withCtx, skelOnly] : [skelOnly];
     const fit = options.find((o) => used + estimateTokens(o) <= budget);
     if (fit) {
