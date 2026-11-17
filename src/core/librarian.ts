@@ -17,6 +17,8 @@ export interface FindOptions {
   memoryFilter?: (t: TaskRecord) => boolean;
   /** Include saved notes (default true; off for the savings estimate, which replays code changes). */
   useNotes?: boolean;
+  /** Receives the full ranking before the pack is cut (diagnostics only). */
+  onRanked?: (ranked: [string, { score: number; reasons: string[] }][]) => void;
 }
 
 export interface FindResult extends BuiltPrompt {
@@ -46,7 +48,7 @@ export class Librarian {
     for (const h of noteHits) {
       h.note.files.forEach((f) => extraBoosts.set(f, { score: 2 + h.score * 4, because: `in saved note “${h.note.title.slice(0, 50)}”` }));
     }
-    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles, memoryFilter: opts.memoryFilter, extraBoosts });
+    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles, memoryFilter: opts.memoryFilter, extraBoosts, onRanked: opts.onRanked });
     markFreshness(this.root, this.view, cands);
     const built = buildPrompt(this.view, task, cands, this.search.size, opts.budget, noteHits);
     if (opts.track !== false) {

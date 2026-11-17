@@ -9,6 +9,7 @@
 - **Install Copilot Instructions** (and `librarian install-instructions`) now also writes the agent and skills. Files you edited yourself (marker removed) are never overwritten.
 
 ### Added
+- **Savings report explains itself.** **Estimate Token Savings** now says why tokens were not saved: the saving with perfect retrieval versus the actual one (so you can tell fixable retrieval misses from structural limits), each task's main cause, every missed file with its reason (ranked below the pack limit, neighbour limit, no public names, too few searchable words, no shared wording), the files missed most often, which commits were left out and why (with the file types involved), and a numbered list of suggestions. A JSON copy of the diagnostics ends the report, so it can be pasted into a chat or issue.
 - **Python support.** `.py` files are now indexed: skeletons (functions, classes, methods, class fields, decorators such as HTTP routes, docstring summaries), the import graph (absolute and relative imports) and retrieval. Uses a built-in parser, so no Python install is needed. Virtualenvs and generated `*_pb2.py` files are skipped. Existing indexes pick up Python files on the next **Index Workspace** / **Build Skeletons Only**.
 - `#librarianStatus` tool (`librarian_getStatus`), also served over MCP.
 

@@ -470,6 +470,83 @@ describe('savings estimate', () => {
   });
 });
 
+describe('savings diagnostics', () => {
+  const git = (root: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: root, stdio: 'ignore' });
+  const filler = (name: string) => Array.from({ length: 40 }, (_, i) => `def ${name}_helper_${i}(x: int) -> int:\n    return x * ${i}`).join('\n');
+
+  test('explains skipped commits, missed files and why tasks did not save', async () => {
+    const root = tmpRepo({
+      'backend/app/services/payrun_service.py': `from app.models.payrun import PayRun\n\ndef create_payrun(db, body):\n    """Create a pay run."""\n    return PayRun()\n${filler('svc')}`,
+      'backend/app/models/payrun.py': `class PayRun:\n    """A pay run."""\n    __tablename__ = "payruns"\n${filler('model')}`,
+      'web/ui.ts': 'export function renderTable(rows: string[]): string { return ""; }\n',
+      'db/001.sql': 'select 1;\n',
+    });
+    git(root, 'init', '-q');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'initial import');
+    fs.appendFileSync(path.join(root, 'db/001.sql'), 'select 2;\n');
+    git(root, 'commit', '-qam', 'PYPAY-1 migration');
+    fs.appendFileSync(path.join(root, 'backend/app/services/payrun_service.py'), '\ndef soft_delete_payrun(db, payrun_id: int):\n    """Soft delete a pay run."""\n');
+    fs.appendFileSync(path.join(root, 'backend/app/models/payrun.py'), '    deleted_at = Column(DateTime)\n');
+    fs.writeFileSync(path.join(root, 'db/002.sql'), 'select 3;\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'Add soft delete for pay runs');
+    fs.appendFileSync(path.join(root, 'web/ui.ts'), '// z\n');
+    git(root, 'commit', '-qam', 'PYPAY-2');
+
+    await runIndex({ root, layer: 'local' });
+    const r = await estimateSavings(new Librarian(root), { commits: 10 });
+    const d = r.diagnostics;
+
+    // skipped commits are explained, with the file types that caused it
+    const noSource = d.skipped.find((k) => k.reason === 'no-source-files')!;
+    assert.strictEqual(noSource.commits, 1);
+    assert.deepStrictEqual(d.skippedExtensions, { '.sql': 1 });
+    assert.strictEqual(d.unindexedChangedExtensions['.sql'], 2, '.sql files changed next to indexed files (initial import, soft delete)');
+    assert.ok(d.suggestions.some((x) => /\.sql/.test(x) && /do(es)? not index|indexes/.test(x)));
+
+    // every replayed task has exactly one cause, and the totals add up
+    assert.strictEqual(Object.values(d.causes).reduce((a, c) => a + c.tasks, 0), r.cases.length);
+    assert.strictEqual(Object.values(d.causes).reduce((a, c) => a + c.netTokens, 0), r.totals.saved);
+    r.cases.forEach((c) => assert.ok(['saved', 'retrieval-misses', 'pack-larger-than-exploration', 'nothing-to-explore'].includes(c.cause)));
+
+    // a ticket-id-only message is flagged and its misses are blamed on the wording
+    const vague = r.cases.find((c) => c.task === 'PYPAY-2')!;
+    assert.strictEqual(vague.vague, true);
+    assert.strictEqual(vague.found.length, 0);
+    assert.deepStrictEqual(vague.missed.map((m) => m.reason), ['vague-task']);
+    assert.strictEqual(d.missesByReason['vague-task'] >= 1, true);
+    assert.strictEqual(d.totalMisses, Object.values(d.missesByReason).reduce((a, b) => a + b, 0));
+
+    // the ceiling is never below the actual result: perfect retrieval cannot do worse
+    assert.ok(d.ceilingSavedPct >= d.actualSavedPct - 1e-9);
+
+    // the report explains itself and carries a parseable JSON copy
+    assert.match(r.markdown, /## Why savings were limited/);
+    assert.match(r.markdown, /### Commits left out of the replay/);
+    assert.match(r.markdown, /### What to do about it/);
+    const json = /```json\n([\s\S]*?)\n```/.exec(r.markdown)![1];
+    const parsed = JSON.parse(json);
+    assert.strictEqual(parsed.tasks.length, r.cases.length);
+    assert.strictEqual(parsed.diagnostics.totalMisses, d.totalMisses);
+  });
+
+  test('says why when nothing could be replayed', async () => {
+    const root = tmpRepo({ 'a.ts': 'export const a = 1;\n', 'db/1.sql': 'select 1;\n' });
+    git(root, 'init', '-q');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'initial');
+    fs.appendFileSync(path.join(root, 'db/1.sql'), 'select 2;\n');
+    git(root, 'commit', '-qam', 'tweak sql');
+    await runIndex({ root, layer: 'local' });
+    const r = await estimateSavings(new Librarian(root), { commits: 1 });
+    assert.strictEqual(r.cases.length, 0);
+    assert.match(r.markdown, /No replayable tasks yet/);
+    assert.match(r.markdown, /Why nothing could be replayed/);
+    assert.match(r.markdown, /Changed no file type Librarian indexes/);
+  });
+});
+
 describe('saved notes (chat context memory)', () => {
   test('save, update by title, search, and stay out of task memory', async () => {
     const root = tmpRepo({

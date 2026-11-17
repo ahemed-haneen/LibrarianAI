@@ -134,6 +134,11 @@ it gets better at picking files the more you use it.
   - **With Librarian:** the context pack, plus reading the changed files (you still edit them), plus exploration for any file the pack missed.
 - The report shows average and median tokens saved per task, **recall** (how many of the actually changed
   files the pack found), full-hit rate, a per-task table, and an optional $ figure.
+- **Why savings were limited:** the report compares the actual saving with the saving *if every changed file had been found*, so you can tell
+  fixable retrieval misses from limits of the method itself. It also lists each task's main cause, every missed file with its reason
+  (ranked just below the pack limit, over the neighbour limit, no public names, task text with too few searchable words, no shared
+  wording), the files missed most often, which commits were left out and why (with the file types involved), and numbered suggestions.
+  A JSON copy of the diagnostics ends the report, to paste into a chat or issue.
 - In VS Code it counts with **your chosen model's own tokenizer** (no chat request is made). Otherwise it uses a ~4 chars/token estimate.
 - Not counted: fewer back-and-forth turns, which is often the larger saving on request-metered plans. Small repositories show small savings.
 
