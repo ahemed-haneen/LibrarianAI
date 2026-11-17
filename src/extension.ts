@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { installCopilotInstructions } from './core/copilotInstructions';
+import { installCopilotInstructions, installLibrarianAgent } from './core/copilotInstructions';
 import { ContextPolicy, LayerName } from './core/indexStore';
 import { IndexResult, runIndex } from './core/indexer';
 import { Librarian } from './core/librarian';
@@ -10,7 +10,6 @@ import { learnFromGit } from './core/taskMemory';
 import { relPosix } from './core/util';
 import { CoverageNode, CoverageTreeProvider } from './coverageTreeProvider';
 import { LibrarianPanel } from './librarianPanel';
-import { registerChatParticipant } from './vscode/chatParticipant';
 import { CopilotLlm } from './vscode/copilotLlm';
 import { SETUP_DONE_KEY, SetupPanel } from './vscode/setupPanel';
 import { estimateSavings } from './core/savings';
@@ -197,9 +196,12 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       const r = installCopilotInstructions(root);
+      const agent = installLibrarianAgent(root);
       const doc = await vscode.workspace.openTextDocument(r.file);
       await vscode.window.showTextDocument(doc);
-      vscode.window.showInformationMessage(`Copilot instructions ${r.action}. Copilot will now consult the Librarian index first.`);
+      vscode.window.showInformationMessage(
+        `Copilot instructions ${r.action}. Librarian agent and slash-command skills: ${agent.created} added, ${agent.updated} updated (in .github/). Copilot will now consult the Librarian index first.`
+      );
     }),
 
     vscode.commands.registerCommand('trishAI.setAnthropicApiKey', async () => {
@@ -310,7 +312,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       const notes = librarian.notes.all();
       if (!notes.length) {
-        vscode.window.showInformationMessage('No saved notes yet. Use “Librarian: Save Note to Memory”, @librarian /save, or #librarianSave in agent mode.');
+        vscode.window.showInformationMessage('No saved notes yet. Use “Librarian: Save Note to Memory”, /librarian-save, or #librarianSave in agent mode.');
         return;
       }
       const pick = await vscode.window.showQuickPick(
@@ -389,7 +391,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ---- Copilot integration ----
   context.subscriptions.push(...registerLmTools(lib, () => tracker, refreshTree));
-  context.subscriptions.push(registerChatParticipant(lib, () => tracker, budget, refreshTree));
   if (tracker) {
     context.subscriptions.push(tracker);
   }

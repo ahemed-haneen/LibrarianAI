@@ -4,7 +4,7 @@
  * Used by CI to build the firm-wide shared index on every merge, and as an MCP server.
  */
 import * as path from 'path';
-import { installCopilotInstructions } from './core/copilotInstructions';
+import { installCopilotInstructions, installLibrarianAgent } from './core/copilotInstructions';
 import { ContextPolicy, LayerName } from './core/indexStore';
 import { runIndex } from './core/indexer';
 import { Librarian } from './core/librarian';
@@ -30,7 +30,7 @@ Commands
   notes      List/search saved notes:  notes [query]
   note       Save a note:              note "<title>" --summary "<text>" [--files a.ts,b.ts] [--layer shared]
   mcp        Run as an MCP server on stdio
-  install-instructions   Add/refresh the Librarian block in .github/copilot-instructions.md
+  install-instructions   Add/refresh the Librarian block in .github/copilot-instructions.md, plus the Librarian agent and skills in .github/
 
 Common options
   --root <dir>              Repository root (default: cwd)
@@ -228,6 +228,8 @@ async function main(): Promise<number> {
     case 'install-instructions': {
       const r = installCopilotInstructions(root);
       console.log(`${r.action}: ${path.relative(root, r.file)}`);
+      const agent = installLibrarianAgent(root);
+      agent.files.forEach((f) => console.log(`written: ${path.relative(root, f)}`));
       return 0;
     }
     case 'version':

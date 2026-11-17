@@ -24,7 +24,7 @@ export interface FindResult extends BuiltPrompt {
 }
 
 /**
- * The one service every front end uses: Copilot tools, @librarian, the panel, the CLI and the
+ * The one service every front end uses: Copilot tools, the Librarian agent, the panel, the CLI and the
  * MCP server. Everything here is local and free — no model calls.
  */
 export class Librarian {

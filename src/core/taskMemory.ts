@@ -49,7 +49,7 @@ export class TaskMemory {
     return [...this.read('shared').tasks, ...this.read('local').tasks];
   }
 
-  /** Start remembering a task (from a tool call, @librarian, or the panel). Returns its id. */
+  /** Start remembering a task (from a tool call or the panel). Returns its id. */
   begin(task: string, suggested: string[]): string {
     const mem = this.read('local');
     const id = hashText(task + Date.now());

@@ -1,5 +1,16 @@
 # Change Log
 
+## [0.4.0]
+
+### Changed
+- **The `@librarian` chat participant is retired.** VS Code deprecated chat participants and the Copilot harness no longer supports them, which showed a "Replace Chat Participant" warning. Everything it did is now available through supported routes:
+  - the default answer → the **Librarian** custom agent (`.github/agents/librarian.agent.md`), which calls `#librarianFind` first;
+  - `/context`, `/related`, `/status`, `/save`, `/notes` → skills `/librarian-context`, `/librarian-related`, `/librarian-status`, `/librarian-save`, `/librarian-notes` (`.github/skills/`).
+- **Install Copilot Instructions** (and `librarian install-instructions`) now also writes the agent and skills. Files you edited yourself (marker removed) are never overwritten.
+
+### Added
+- `#librarianStatus` tool (`librarian_getStatus`), also served over MCP.
+
 ## [0.3.0]
 
 ### Added

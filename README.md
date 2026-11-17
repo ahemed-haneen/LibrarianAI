@@ -15,9 +15,9 @@ You keep working in Copilot Chat. Librarian runs alongside it:
 
 | Layer | How |
 |---|---|
-| **Copilot agent mode calls Librarian itself** | Language Model Tools `#librarianFind`, `#librarianSkeleton`, `#librarianRelated` |
+| **Copilot agent mode calls Librarian itself** | Language Model Tools `#librarianFind`, `#librarianSkeleton`, `#librarianRelated`, `#librarianStatus`, `#librarianSave`, `#librarianNotes` |
 | **Copilot is told to use them** | `Librarian: Install Copilot Instructions` → `.github/copilot-instructions.md` |
-| **Explicit hand-off** | `@librarian <task>` in Copilot Chat (uses the model you picked), `/context` for the pack only |
+| **Explicit hand-off** | Pick the **Librarian** custom agent in Copilot Chat, or run a slash-command skill: `/librarian-context <task>` (pack only), `/librarian-related`, `/librarian-status`, `/librarian-save`, `/librarian-notes`. The same command installs them into `.github/`. |
 | **Any other AI** | *Build Context Pack* panel copies a budgeted prompt to the clipboard |
 | **Other IDEs / agents** | `librarian mcp` ([docs/MCP.md](docs/MCP.md)) |
 
@@ -29,7 +29,7 @@ You keep working in Copilot Chat. Librarian runs alongside it:
 3. **Librarian: Estimate Token Savings** shows what your own history says you'd save.
 4. Run **Librarian: Install Copilot Instructions** and commit the file.
 5. Optional: **Librarian: Index Workspace** (AI summaries) and **Learn from Recent Commits** (task memory).
-6. Work as usual in Copilot agent mode, or ask `@librarian`. To keep a chat's context for later, say
+6. Work as usual in Copilot agent mode, or choose the **Librarian** agent. To keep a chat's context for later, say
    *"save this to librarian memory"* (`#librarianSave`).
 
 Testing it on a real repository: **[docs/TESTING.md](docs/TESTING.md)**.
@@ -58,7 +58,6 @@ src/
     copilotLlm.ts            vscode.lm (your Copilot), only the exact model you chose
     setupPanel.ts            first-run setup page (provider + model)
     lmTools.ts               Copilot agent-mode tools
-    chatParticipant.ts       @librarian
     taskTracker.ts           links saved files to the active task
   extension.ts, coverageTreeProvider.ts, librarianPanel.ts
   cli.ts                     `librarian` command (CI, MCP, scripting)

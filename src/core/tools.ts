@@ -69,6 +69,16 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: 'librarian_getStatus',
+    description:
+      'Shows the state of the Librarian index: how many source files are indexed, how many are fresh or stale, saved notes, ' +
+      'and the estimated tokens saved so far. Use when the user asks whether the index is ready or up to date.',
+    inputSchema: { type: 'object', properties: {} },
+    run(lib) {
+      return { text: lib.status().text };
+    },
+  },
+  {
     name: 'librarian_saveNote',
     description:
       'Saves the context of the current conversation to Librarian memory so future chats can reuse it. Call this when the user asks to ' +

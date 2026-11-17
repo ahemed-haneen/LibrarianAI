@@ -151,7 +151,7 @@ Choose what writes those summaries. <b>Nothing is used until you save here</b>. 
   <h2>2. Copilot model for background summaries</h2>
   <p class="muted">Summaries are simple work, so a small model is enough. Badges are a <b>hint from the model name only</b>:
   VS Code doesn't report premium-request multipliers, so check your firm's Copilot plan before choosing.
-  Your <b>@librarian</b> chats always use the model you pick in the chat window, not this one.</p>
+  The <b>Librarian</b> agent in Copilot Chat always uses the model you pick in the chat window, not this one.</p>
   <div id="models"></div>
   <p><button class="secondary" id="refresh">Refresh list</button></p>
 </div>
