@@ -80,21 +80,23 @@ for a $ line. Repos with more history and more files give more meaningful number
    **Expect:** Copilot calls *Librarian: findRelevantFiles* early (shown in the chat as a tool call),
    then opens fewer files.
 4. Force it explicitly: *"#librarianFind where is pagination implemented?"*
-5. `@librarian how does authentication work?` → answer plus a footer like
+5. Choose the **Librarian** agent in the Copilot Chat agent picker and ask *how does authentication work?*
+   **Expect:** it calls *Librarian: findRelevantFiles* first, then answers from the pack. (The old `@librarian`
+   chat participant was retired because VS Code deprecated chat participants.)
    *Context: N file(s), ~X tokens (reading them in full ≈ Y)*.
-6. `@librarian /context add caching to the user lookup` → the pack only (no model call).
-7. `@librarian /related src/<some file>.ts` → imports, importers, co-changed files.
-8. `@librarian /status` → coverage, notes and savings so far.
+6. `/librarian-context add caching to the user lookup` → the pack only, no edits.
+7. `/librarian-related src/<some file>.ts` → imports, importers, co-changed files.
+8. `/librarian-status` (or `#librarianStatus`) → coverage, notes and savings so far.
 
 > If the tools don't appear in agent mode, your organisation may have disabled extension tools
-> (setting `chat.extensionTools.enabled`). `@librarian` and the copy-paste panel still work.
+> (setting `chat.extensionTools.enabled`). The copy-paste panel and `librarian mcp` still work.
 
 ## 6. Learning (gets better with use)
 
 1. Run **Librarian: Learn from Recent Commits** (e.g. 100). **Expect:** *Learnt N task(s)*.
-2. Ask `@librarian /context <a task similar to a past commit message>`. **Expect:** files from that
+2. Run `/librarian-context <a task similar to a past commit message>`. **Expect:** files from that
    commit appear, with the reason *changed in similar task "…"*.
-3. Ask `@librarian /context <a new task>`, then edit and save two files. Ask the same kind of task
+3. Run `/librarian-context <a new task>`, then edit and save two files. Ask the same kind of task
    again: those files now rank higher, with a *similar task* reason.
 
 ## 7. Saved chat context (notes)
@@ -104,7 +106,7 @@ for a $ line. Repos with more history and more files give more meaningful number
    **Expect:** a confirmation dialog showing the title and summary Copilot wrote → **Continue** → saved.
 2. Start a **new** chat and ask something related, e.g. *"#librarianFind continue the <topic> work"*.
    **Expect:** a *Saved context from earlier chats* section containing your note.
-3. `@librarian /notes` lists notes. `@librarian /notes <query>` searches them.
+3. `/librarian-notes <query>` searches notes (or ask for `#librarianNotes`).
 4. Old chat: in the chat view use **Copy All** (right-click), then **Librarian: Save Note to Memory** →
    *From clipboard*. Long text offers *Condense with <your model>*.
 5. **Librarian: Manage Saved Notes** → open / *Share with team* (moves the note to

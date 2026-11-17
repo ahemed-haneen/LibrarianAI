@@ -1,0 +1,827 @@
+diff --git a/.github/agents/librarian.agent.md b/.github/agents/librarian.agent.md
+new file mode 100644
+index 0000000..e55d3ce
+--- /dev/null
++++ b/.github/agents/librarian.agent.md
+@@ -0,0 +1,15 @@
++---
++name: Librarian
++description: Works from the pre-built Librarian codebase index, so it reads fewer files and uses fewer tokens.
++---
++<!-- librarian:managed -->
++You are Librarian, a coding assistant that works from a pre-built index of this repository.
++
++1. For any task, call `#librarianFind` first with the task in the user's words. Answer and plan from the returned
++   signatures and summaries. Open full source only for code you must edit or whose implementation matters.
++2. Use `#librarianSkeleton` for one file's API, and `#librarianRelated` for imports, importers and co-changed files.
++3. When the user refers to earlier work, call `#librarianNotes`. When they ask to save or remember this chat,
++   call `#librarianSave` with a summary you write from the conversation.
++4. Entries marked stale may be outdated: confirm them against the source. If the index looks empty or old,
++   call `#librarianStatus` and tell the user.
++5. Be concise. Prefer concrete edits with file paths. If you need code that is not in the pack, name the files to open.
+diff --git a/.github/copilot-instructions.md b/.github/copilot-instructions.md
+index 003d448..4b555b4 100644
+--- a/.github/copilot-instructions.md
++++ b/.github/copilot-instructions.md
+@@ -10,6 +10,7 @@ and purpose. Use it to keep context small and avoid unnecessary file reads.
+    It returns the most relevant files with their signatures and summaries, picked using past changes.
+ 2. To inspect a specific file's API without reading it, call `#librarianSkeleton` with its path.
+ 3. Before changing a file's exports, call `#librarianRelated` to see what imports it.
++   To check whether the index is ready or stale, call `#librarianStatus`.
+ 4. If tools are unavailable, read `.trishAI/shared/files/<path>.skeleton.md` (or `.trishAI/local/files/...`)
+    instead of the full source where signatures are enough.
+ 5. Open full source files only for the parts you need to edit or whose implementation matters.
+diff --git a/.github/skills/librarian-context/SKILL.md b/.github/skills/librarian-context/SKILL.md
+new file mode 100644
+index 0000000..7bf5b63
+--- /dev/null
++++ b/.github/skills/librarian-context/SKILL.md
+@@ -0,0 +1,8 @@
++---
++name: librarian-context
++description: Build the Librarian context pack for a task (no code changes).
++argument-hint: "[task description]"
++disable-model-invocation: true
++---
++<!-- librarian:managed -->
++Call `#librarianFind` with the task the user gave and show the returned context pack. Do not edit files or read other sources.
+diff --git a/.github/skills/librarian-notes/SKILL.md b/.github/skills/librarian-notes/SKILL.md
+new file mode 100644
+index 0000000..c71ed75
+--- /dev/null
++++ b/.github/skills/librarian-notes/SKILL.md
+@@ -0,0 +1,8 @@
++---
++name: librarian-notes
++description: Search notes saved from earlier chats.
++argument-hint: "[what to look for]"
++disable-model-invocation: true
++---
++<!-- librarian:managed -->
++Call `#librarianNotes` with the query the user gave and show the matching notes.
+diff --git a/.github/skills/librarian-related/SKILL.md b/.github/skills/librarian-related/SKILL.md
+new file mode 100644
+index 0000000..f39dbf3
+--- /dev/null
++++ b/.github/skills/librarian-related/SKILL.md
+@@ -0,0 +1,8 @@
++---
++name: librarian-related
++description: Show imports, importers and co-changed files for a file.
++argument-hint: "[file path]"
++disable-model-invocation: true
++---
++<!-- librarian:managed -->
++Call `#librarianRelated` with the path the user gave (or the file open in the editor if none) and show the result.
+diff --git a/.github/skills/librarian-save/SKILL.md b/.github/skills/librarian-save/SKILL.md
+new file mode 100644
+index 0000000..6121388
+--- /dev/null
++++ b/.github/skills/librarian-save/SKILL.md
+@@ -0,0 +1,8 @@
++---
++name: librarian-save
++description: Save this conversation to Librarian memory for future chats.
++argument-hint: "[optional extra note]"
++disable-model-invocation: true
++---
++<!-- librarian:managed -->
++Summarise this conversation (goal, key decisions and why, constraints, what was rejected, status, next steps, under 250 words) and call `#librarianSave` with a short specific title, that summary and the workspace-relative files that matter. Add anything the user typed after the command.
+diff --git a/.github/skills/librarian-status/SKILL.md b/.github/skills/librarian-status/SKILL.md
+new file mode 100644
+index 0000000..0bf51ae
+--- /dev/null
++++ b/.github/skills/librarian-status/SKILL.md
+@@ -0,0 +1,7 @@
++---
++name: librarian-status
++description: Show Librarian index coverage, freshness and estimated token savings.
++disable-model-invocation: true
++---
++<!-- librarian:managed -->
++Call `#librarianStatus` and show the result as is.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0a509fd..ed7178a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,16 @@
+ # Change Log
+ 
++## [0.4.0]
++
++### Changed
++- **The `@librarian` chat participant is retired.** VS Code deprecated chat participants and the Copilot harness no longer supports them, which showed a "Replace Chat Participant" warning. Everything it did is now available through supported routes:
++  - the default answer → the **Librarian** custom agent (`.github/agents/librarian.agent.md`), which calls `#librarianFind` first;
++  - `/context`, `/related`, `/status`, `/save`, `/notes` → skills `/librarian-context`, `/librarian-related`, `/librarian-status`, `/librarian-save`, `/librarian-notes` (`.github/skills/`).
++- **Install Copilot Instructions** (and `librarian install-instructions`) now also writes the agent and skills. Files you edited yourself (marker removed) are never overwritten.
++
++### Added
++- `#librarianStatus` tool (`librarian_getStatus`), also served over MCP.
++
+ ## [0.3.0]
+ 
+ ### Added
+diff --git a/FEATURES.md b/FEATURES.md
+index fba1304..232016d 100644
+--- a/FEATURES.md
++++ b/FEATURES.md
+@@ -19,9 +19,9 @@ it gets better at picking files the more you use it.
+ | Task memory | Learns which files you actually change for which kind of task | Free |
+ | Setup page | Choose provider and exact model; nothing runs until you save | Free |
+ | Savings estimate | Replays your own history to measure tokens saved and recall | Free |
+-| Copilot tools | `#librarianFind`, `#librarianSkeleton`, `#librarianRelated`, `#librarianSave`, `#librarianNotes` in agent mode | Free (the tool itself) |
++| Copilot tools | `#librarianFind`, `#librarianSkeleton`, `#librarianRelated`, `#librarianStatus`, `#librarianSave`, `#librarianNotes` in agent mode | Free (the tool itself) |
+ | Saved chat context | Save a chat's goal, decisions and status. Related future chats get it automatically. | Free, or one request to condense |
+-| `@librarian` | Chat participant using your selected Copilot model with a compact pack | One normal chat request |
++| Librarian agent + skills | Custom Copilot agent and `/librarian-*` slash commands that work from a compact pack | One normal chat request |
+ | Context packs | Budgeted prompt you can paste into any AI | Free |
+ | Firm-wide CI index | Shared index rebuilt on each merge, pulled by everyone | One summary per changed API, firm-wide |
+ | MCP server | Same tools for JetBrains / Visual Studio Copilot, Claude Code, etc. | Free |
+@@ -67,7 +67,7 @@ it gets better at picking files the more you use it.
+   agent knows to check the source.
+ 
+ ### Learning: it gets better as you use it
+-- When Librarian gives out context for a task (tool call, `@librarian` or panel), the files you
++- When Librarian gives out context for a task (tool call, agent or panel), the files you
+   **save during the next 45 minutes** are recorded against that task.
+ - **Learn from git**: every merged commit becomes "commit message → files changed"
+   (`Librarian: Learn from Recent Commits`, or automatically in CI).
+@@ -79,11 +79,14 @@ it gets better at picking files the more you use it.
+   - `#librarianFind`: relevant files for a task
+   - `#librarianSkeleton`: a file's API and summary without reading it
+   - `#librarianRelated`: imports, importers and co-changed files
+-- **`@librarian` chat participant**: answers with whichever Copilot model you picked, from a
+-  compact context pack. Sub-commands: `/context` (pack only, no model call), `/related`, `/status`.
++  - `#librarianStatus`: index coverage and freshness
++- **Librarian custom agent** (`.github/agents/librarian.agent.md`): works from the index first, with whichever
++  Copilot model you picked in the chat. It replaces the old `@librarian` chat participant, which VS Code deprecated.
++- **Slash-command skills** (`.github/skills/`): `/librarian-context` (pack only), `/librarian-related`,
++  `/librarian-status`, `/librarian-save`, `/librarian-notes`.
+ - **Copilot instructions**: `Librarian: Install Copilot Instructions` adds a managed block to
+-  `.github/copilot-instructions.md` telling Copilot to consult the index first. Your own
+-  content is kept, and re-running only updates the block.
++  `.github/copilot-instructions.md` telling Copilot to consult the index first, and installs the agent and skills above. Your own
++  content is kept, and re-running only updates what Librarian wrote.
+ 
+ ### Firm-wide index (CI)
+ - `templates/librarian-index.yml`: on every merge it re-indexes **only the changed files**,
+@@ -96,7 +99,7 @@ it gets better at picking files the more you use it.
+ ### CLI & MCP
+ - `librarian index | learn | query | status | install-instructions | mcp`. The same core as the
+   extension, no VS Code needed.
+-- `librarian mcp` exposes the three tools over the Model Context Protocol (stdio).
++- `librarian mcp` exposes the Librarian tools over the Model Context Protocol (stdio).
+ 
+ ### Setup: you choose the model
+ - On first run a **Librarian Setup** page opens. Pick the provider (firm's Copilot, Anthropic, or no AI)
+@@ -105,7 +108,7 @@ it gets better at picking files the more you use it.
+   VS Code doesn't expose premium-request multipliers, so treat it as a hint and confirm against your plan.
+ - **Nothing is pre-selected and nothing is auto-picked.** Until you save, only free skeletons are built.
+   If your chosen model disappears, summarising stops and asks you. It never falls back to another model.
+-- Your `@librarian` chats always use the model you select in the chat window.
++- The Librarian agent always uses the model you select in the chat window.
+ 
+ ### Measuring savings
+ - **Librarian: Estimate Token Savings** (or click *Est. tokens saved* in the sidebar, or
+@@ -126,14 +129,14 @@ status, next steps) and reuse it in later chats instead of explaining it again.
+ | Where you are | How to save |
+ |---|---|
+ | Copilot **agent mode** chat | Say *"save this to librarian memory"* or type `#librarianSave`. Copilot writes the summary from the full conversation; you confirm before it's stored. |
+-| `@librarian` chat | `@librarian /save` summarises the conversation (one request to the chat's model). `@librarian /save <text>` stores your text as is. |
++| Librarian agent or any chat with skills | `/librarian-save` summarises the conversation and saves it (you confirm first). |
+ | Any other chat, or an old one | **Copy All** in the chat → **Librarian: Save Note to Memory** → *From clipboard*. Long text can be condensed with your chosen model. |
+ | Editor | Select text → right-click → **Save Note to Memory**. |
+ | Terminal / CI | `librarian note "<title>" --summary "<text>" --files a.ts,b.ts` |
+ 
+ - **Reused automatically:** relevant notes are added to context packs under *Saved context from earlier
+   chats* (up to 30% of the budget), and the files they mention rank higher. Ask explicitly with
+-  `#librarianNotes`, `@librarian /notes <query>` or `librarian notes <query>`.
++  `#librarianNotes`, `/librarian-notes <query>` or `librarian notes <query>`.
+ - **Not a code change:** notes are kept apart from task memory. They never count as files you changed,
+   and they live in the git-ignored `.trishAI/local/notes.json`, so they don't show up in `git status`.
+ - **Updates, not duplicates:** saving again with the same title replaces that note.
+diff --git a/README.md b/README.md
+index 5087755..0074f08 100644
+--- a/README.md
++++ b/README.md
+@@ -15,9 +15,9 @@ You keep working in Copilot Chat. Librarian runs alongside it:
+ 
+ | Layer | How |
+ |---|---|
+-| **Copilot agent mode calls Librarian itself** | Language Model Tools `#librarianFind`, `#librarianSkeleton`, `#librarianRelated` |
++| **Copilot agent mode calls Librarian itself** | Language Model Tools `#librarianFind`, `#librarianSkeleton`, `#librarianRelated`, `#librarianStatus`, `#librarianSave`, `#librarianNotes` |
+ | **Copilot is told to use them** | `Librarian: Install Copilot Instructions` → `.github/copilot-instructions.md` |
+-| **Explicit hand-off** | `@librarian <task>` in Copilot Chat (uses the model you picked), `/context` for the pack only |
++| **Explicit hand-off** | Pick the **Librarian** custom agent in Copilot Chat, or run a slash-command skill: `/librarian-context <task>` (pack only), `/librarian-related`, `/librarian-status`, `/librarian-save`, `/librarian-notes`. The same command installs them into `.github/`. |
+ | **Any other AI** | *Build Context Pack* panel copies a budgeted prompt to the clipboard |
+ | **Other IDEs / agents** | `librarian mcp` ([docs/MCP.md](docs/MCP.md)) |
+ 
+@@ -29,7 +29,7 @@ You keep working in Copilot Chat. Librarian runs alongside it:
+ 3. **Librarian: Estimate Token Savings** shows what your own history says you'd save.
+ 4. Run **Librarian: Install Copilot Instructions** and commit the file.
+ 5. Optional: **Librarian: Index Workspace** (AI summaries) and **Learn from Recent Commits** (task memory).
+-6. Work as usual in Copilot agent mode, or ask `@librarian`. To keep a chat's context for later, say
++6. Work as usual in Copilot agent mode, or choose the **Librarian** agent. To keep a chat's context for later, say
+    *"save this to librarian memory"* (`#librarianSave`).
+ 
+ Testing it on a real repository: **[docs/TESTING.md](docs/TESTING.md)**.
+@@ -58,7 +58,6 @@ src/
+     copilotLlm.ts            vscode.lm (your Copilot), only the exact model you chose
+     setupPanel.ts            first-run setup page (provider + model)
+     lmTools.ts               Copilot agent-mode tools
+-    chatParticipant.ts       @librarian
+     taskTracker.ts           links saved files to the active task
+   extension.ts, coverageTreeProvider.ts, librarianPanel.ts
+   cli.ts                     `librarian` command (CI, MCP, scripting)
+diff --git a/docs/TESTING.md b/docs/TESTING.md
+index cb88eb2..474f74c 100644
+--- a/docs/TESTING.md
++++ b/docs/TESTING.md
+@@ -80,21 +80,23 @@ for a $ line. Repos with more history and more files give more meaningful number
+    **Expect:** Copilot calls *Librarian: findRelevantFiles* early (shown in the chat as a tool call),
+    then opens fewer files.
+ 4. Force it explicitly: *"#librarianFind where is pagination implemented?"*
+-5. `@librarian how does authentication work?` → answer plus a footer like
++5. Choose the **Librarian** agent in the Copilot Chat agent picker and ask *how does authentication work?*
++   **Expect:** it calls *Librarian: findRelevantFiles* first, then answers from the pack. (The old `@librarian`
++   chat participant was retired because VS Code deprecated chat participants.)
+    *Context: N file(s), ~X tokens (reading them in full ≈ Y)*.
+-6. `@librarian /context add caching to the user lookup` → the pack only (no model call).
+-7. `@librarian /related src/<some file>.ts` → imports, importers, co-changed files.
+-8. `@librarian /status` → coverage, notes and savings so far.
++6. `/librarian-context add caching to the user lookup` → the pack only, no edits.
++7. `/librarian-related src/<some file>.ts` → imports, importers, co-changed files.
++8. `/librarian-status` (or `#librarianStatus`) → coverage, notes and savings so far.
+ 
+ > If the tools don't appear in agent mode, your organisation may have disabled extension tools
+-> (setting `chat.extensionTools.enabled`). `@librarian` and the copy-paste panel still work.
++> (setting `chat.extensionTools.enabled`). The copy-paste panel and `librarian mcp` still work.
+ 
+ ## 6. Learning (gets better with use)
+ 
+ 1. Run **Librarian: Learn from Recent Commits** (e.g. 100). **Expect:** *Learnt N task(s)*.
+-2. Ask `@librarian /context <a task similar to a past commit message>`. **Expect:** files from that
++2. Run `/librarian-context <a task similar to a past commit message>`. **Expect:** files from that
+    commit appear, with the reason *changed in similar task "…"*.
+-3. Ask `@librarian /context <a new task>`, then edit and save two files. Ask the same kind of task
++3. Run `/librarian-context <a new task>`, then edit and save two files. Ask the same kind of task
+    again: those files now rank higher, with a *similar task* reason.
+ 
+ ## 7. Saved chat context (notes)
+@@ -104,7 +106,7 @@ for a $ line. Repos with more history and more files give more meaningful number
+    **Expect:** a confirmation dialog showing the title and summary Copilot wrote → **Continue** → saved.
+ 2. Start a **new** chat and ask something related, e.g. *"#librarianFind continue the <topic> work"*.
+    **Expect:** a *Saved context from earlier chats* section containing your note.
+-3. `@librarian /notes` lists notes. `@librarian /notes <query>` searches them.
++3. `/librarian-notes <query>` searches notes (or ask for `#librarianNotes`).
+ 4. Old chat: in the chat view use **Copy All** (right-click), then **Librarian: Save Note to Memory** →
+    *From clipboard*. Long text offers *Condense with <your model>*.
+ 5. **Librarian: Manage Saved Notes** → open / *Share with team* (moves the note to
+diff --git a/package.json b/package.json
+index 9e75b38..2ed555d 100644
+--- a/package.json
++++ b/package.json
+@@ -2,7 +2,7 @@
+   "name": "trinet-ai-smart-assist",
+   "displayName": "TrishAI",
+   "description": "Librarian: a codebase index that makes GitHub Copilot (and other AI agents) use fewer tokens and fewer turns — and gets smarter as you use it.",
+-  "version": "0.3.0",
++  "version": "0.4.0",
+   "engines": {
+     "vscode": "^1.134.0"
+   },
+@@ -274,37 +274,6 @@
+         }
+       ]
+     },
+-    "chatParticipants": [
+-      {
+-        "id": "trishAI.librarian",
+-        "name": "librarian",
+-        "fullName": "Librarian",
+-        "description": "Answer using the pre-built codebase index (fewer tokens than attaching files)",
+-        "isSticky": true,
+-        "commands": [
+-          {
+-            "name": "context",
+-            "description": "Build the context pack only — no model call"
+-          },
+-          {
+-            "name": "related",
+-            "description": "Imports, importers and co-changed files for a path"
+-          },
+-          {
+-            "name": "status",
+-            "description": "Index coverage, freshness and estimated savings"
+-          },
+-          {
+-            "name": "save",
+-            "description": "Summarise this conversation into a saved note for future chats"
+-          },
+-          {
+-            "name": "notes",
+-            "description": "List or search saved notes"
+-          }
+-        ]
+-      }
+-    ],
+     "languageModelTools": [
+       {
+         "name": "librarian_findRelevantFiles",
+@@ -389,6 +358,23 @@
+           ]
+         }
+       },
++      {
++        "name": "librarian_getStatus",
++        "toolReferenceName": "librarianStatus",
++        "displayName": "Librarian: Index Status",
++        "icon": "$(pulse)",
++        "userDescription": "Show how much of the codebase is indexed and how much is stale.",
++        "modelDescription": "Shows the state of the Librarian index: how many source files are indexed, how many are fresh or stale, saved notes, and the estimated tokens saved so far. Use when the user asks whether the index is ready or up to date.",
++        "canBeReferencedInPrompt": true,
++        "tags": [
++          "librarian",
++          "codebase"
++        ],
++        "inputSchema": {
++          "type": "object",
++          "properties": {}
++        }
++      },
+       {
+         "name": "librarian_saveNote",
+         "toolReferenceName": "librarianSave",
+diff --git a/src/cli.ts b/src/cli.ts
+index 1d00587..1ea0750 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -4,7 +4,7 @@
+  * Used by CI to build the firm-wide shared index on every merge, and as an MCP server.
+  */
+ import * as path from 'path';
+-import { installCopilotInstructions } from './core/copilotInstructions';
++import { installCopilotInstructions, installLibrarianAgent } from './core/copilotInstructions';
+ import { ContextPolicy, LayerName } from './core/indexStore';
+ import { runIndex } from './core/indexer';
+ import { Librarian } from './core/librarian';
+@@ -30,7 +30,7 @@ Commands
+   notes      List/search saved notes:  notes [query]
+   note       Save a note:              note "<title>" --summary "<text>" [--files a.ts,b.ts] [--layer shared]
+   mcp        Run as an MCP server on stdio
+-  install-instructions   Add/refresh the Librarian block in .github/copilot-instructions.md
++  install-instructions   Add/refresh the Librarian block in .github/copilot-instructions.md, plus the Librarian agent and skills in .github/
+ 
+ Common options
+   --root <dir>              Repository root (default: cwd)
+@@ -228,6 +228,8 @@ async function main(): Promise<number> {
+     case 'install-instructions': {
+       const r = installCopilotInstructions(root);
+       console.log(`${r.action}: ${path.relative(root, r.file)}`);
++      const agent = installLibrarianAgent(root);
++      agent.files.forEach((f) => console.log(`written: ${path.relative(root, f)}`));
+       return 0;
+     }
+     case 'version':
+diff --git a/src/core/copilotInstructions.ts b/src/core/copilotInstructions.ts
+index 06a4493..a0f73d8 100644
+--- a/src/core/copilotInstructions.ts
++++ b/src/core/copilotInstructions.ts
+@@ -15,6 +15,7 @@ and purpose. Use it to keep context small and avoid unnecessary file reads.
+    It returns the most relevant files with their signatures and summaries, picked using past changes.
+ 2. To inspect a specific file's API without reading it, call \`#librarianSkeleton\` with its path.
+ 3. Before changing a file's exports, call \`#librarianRelated\` to see what imports it.
++   To check whether the index is ready or stale, call \`#librarianStatus\`.
+ 4. If tools are unavailable, read \`.trishAI/shared/files/<path>.skeleton.md\` (or \`.trishAI/local/files/...\`)
+    instead of the full source where signatures are enough.
+ 5. Open full source files only for the parts you need to edit or whose implementation matters.
+@@ -41,3 +42,90 @@ export function installCopilotInstructions(root: string): { file: string; action
+   writeText(file, next);
+   return { file, action: 'updated' };
+ }
++
++const AGENT_MARK = '<!-- librarian:managed -->';
++
++/** Replaces the retired @librarian chat participant: an ongoing specialist role for Copilot. */
++export const AGENT_FILE = `---
++name: Librarian
++description: Works from the pre-built Librarian codebase index, so it reads fewer files and uses fewer tokens.
++---
++${AGENT_MARK}
++You are Librarian, a coding assistant that works from a pre-built index of this repository.
++
++1. For any task, call \`#librarianFind\` first with the task in the user's words. Answer and plan from the returned
++   signatures and summaries. Open full source only for code you must edit or whose implementation matters.
++2. Use \`#librarianSkeleton\` for one file's API, and \`#librarianRelated\` for imports, importers and co-changed files.
++3. When the user refers to earlier work, call \`#librarianNotes\`. When they ask to save or remember this chat,
++   call \`#librarianSave\` with a summary you write from the conversation.
++4. Entries marked stale may be outdated: confirm them against the source. If the index looks empty or old,
++   call \`#librarianStatus\` and tell the user.
++5. Be concise. Prefer concrete edits with file paths. If you need code that is not in the pack, name the files to open.
++`;
++
++/** Slash-command replacements for the old `@librarian /command`s: skills the user invokes explicitly. */
++export const SKILLS: { name: string; description: string; hint?: string; body: string }[] = [
++  {
++    name: 'librarian-context',
++    description: 'Build the Librarian context pack for a task (no code changes).',
++    hint: '[task description]',
++    body: 'Call `#librarianFind` with the task the user gave and show the returned context pack. Do not edit files or read other sources.',
++  },
++  {
++    name: 'librarian-related',
++    description: 'Show imports, importers and co-changed files for a file.',
++    hint: '[file path]',
++    body: 'Call `#librarianRelated` with the path the user gave (or the file open in the editor if none) and show the result.',
++  },
++  {
++    name: 'librarian-status',
++    description: 'Show Librarian index coverage, freshness and estimated token savings.',
++    body: 'Call `#librarianStatus` and show the result as is.',
++  },
++  {
++    name: 'librarian-save',
++    description: 'Save this conversation to Librarian memory for future chats.',
++    hint: '[optional extra note]',
++    body:
++      'Summarise this conversation (goal, key decisions and why, constraints, what was rejected, status, next steps, under 250 words) ' +
++      'and call `#librarianSave` with a short specific title, that summary and the workspace-relative files that matter. ' +
++      'Add anything the user typed after the command.',
++  },
++  {
++    name: 'librarian-notes',
++    description: 'Search notes saved from earlier chats.',
++    hint: '[what to look for]',
++    body: 'Call `#librarianNotes` with the query the user gave and show the matching notes.',
++  },
++];
++
++const skillFile = (s: (typeof SKILLS)[number]): string =>
++  `---\nname: ${s.name}\ndescription: ${s.description}\n${s.hint ? `argument-hint: "${s.hint}"\n` : ''}disable-model-invocation: true\n---\n${AGENT_MARK}\n${s.body}\n`;
++
++/**
++ * Write the Librarian custom agent and its slash-command skills into .github/. Files we created are
++ * refreshed; a file you took over (the managed marker removed) is never overwritten.
++ */
++export function installLibrarianAgent(root: string): { files: string[]; created: number; updated: number } {
++  const targets: { file: string; content: string }[] = [
++    { file: path.join(root, '.github', 'agents', 'librarian.agent.md'), content: AGENT_FILE },
++    ...SKILLS.map((s) => ({ file: path.join(root, '.github', 'skills', s.name, 'SKILL.md'), content: skillFile(s) })),
++  ];
++  const files: string[] = [];
++  let created = 0;
++  let updated = 0;
++  for (const t of targets) {
++    const existing = fs.existsSync(t.file) ? fs.readFileSync(t.file, 'utf8') : undefined;
++    if (existing === t.content || (existing !== undefined && !existing.includes(AGENT_MARK))) {
++      continue;
++    }
++    writeText(t.file, t.content);
++    files.push(t.file);
++    if (existing === undefined) {
++      created++;
++    } else {
++      updated++;
++    }
++  }
++  return { files, created, updated };
++}
+diff --git a/src/core/librarian.ts b/src/core/librarian.ts
+index d70fb25..efb988d 100644
+--- a/src/core/librarian.ts
++++ b/src/core/librarian.ts
+@@ -24,7 +24,7 @@ export interface FindResult extends BuiltPrompt {
+ }
+ 
+ /**
+- * The one service every front end uses: Copilot tools, @librarian, the panel, the CLI and the
++ * The one service every front end uses: Copilot tools, the Librarian agent, the panel, the CLI and the
+  * MCP server. Everything here is local and free — no model calls.
+  */
+ export class Librarian {
+diff --git a/src/core/taskMemory.ts b/src/core/taskMemory.ts
+index 1232430..05f96cd 100644
+--- a/src/core/taskMemory.ts
++++ b/src/core/taskMemory.ts
+@@ -49,7 +49,7 @@ export class TaskMemory {
+     return [...this.read('shared').tasks, ...this.read('local').tasks];
+   }
+ 
+-  /** Start remembering a task (from a tool call, @librarian, or the panel). Returns its id. */
++  /** Start remembering a task (from a tool call or the panel). Returns its id. */
+   begin(task: string, suggested: string[]): string {
+     const mem = this.read('local');
+     const id = hashText(task + Date.now());
+diff --git a/src/core/tools.ts b/src/core/tools.ts
+index ac9ff2d..34642e8 100644
+--- a/src/core/tools.ts
++++ b/src/core/tools.ts
+@@ -68,6 +68,16 @@ export const TOOL_DEFS: ToolDef[] = [
+       return { text: lib.getRelated(String(input.path ?? '')) };
+     },
+   },
++  {
++    name: 'librarian_getStatus',
++    description:
++      'Shows the state of the Librarian index: how many source files are indexed, how many are fresh or stale, saved notes, ' +
++      'and the estimated tokens saved so far. Use when the user asks whether the index is ready or up to date.',
++    inputSchema: { type: 'object', properties: {} },
++    run(lib) {
++      return { text: lib.status().text };
++    },
++  },
+   {
+     name: 'librarian_saveNote',
+     description:
+diff --git a/src/extension.ts b/src/extension.ts
+index 0d5bea4..eb0c759 100644
+--- a/src/extension.ts
++++ b/src/extension.ts
+@@ -1,5 +1,5 @@
+ import * as vscode from 'vscode';
+-import { installCopilotInstructions } from './core/copilotInstructions';
++import { installCopilotInstructions, installLibrarianAgent } from './core/copilotInstructions';
+ import { ContextPolicy, LayerName } from './core/indexStore';
+ import { IndexResult, runIndex } from './core/indexer';
+ import { Librarian } from './core/librarian';
+@@ -10,7 +10,6 @@ import { learnFromGit } from './core/taskMemory';
+ import { relPosix } from './core/util';
+ import { CoverageNode, CoverageTreeProvider } from './coverageTreeProvider';
+ import { LibrarianPanel } from './librarianPanel';
+-import { registerChatParticipant } from './vscode/chatParticipant';
+ import { CopilotLlm } from './vscode/copilotLlm';
+ import { SETUP_DONE_KEY, SetupPanel } from './vscode/setupPanel';
+ import { estimateSavings } from './core/savings';
+@@ -197,9 +196,12 @@ export function activate(context: vscode.ExtensionContext) {
+         return;
+       }
+       const r = installCopilotInstructions(root);
++      const agent = installLibrarianAgent(root);
+       const doc = await vscode.workspace.openTextDocument(r.file);
+       await vscode.window.showTextDocument(doc);
+-      vscode.window.showInformationMessage(`Copilot instructions ${r.action}. Copilot will now consult the Librarian index first.`);
++      vscode.window.showInformationMessage(
++        `Copilot instructions ${r.action}. Librarian agent and slash-command skills: ${agent.created} added, ${agent.updated} updated (in .github/). Copilot will now consult the Librarian index first.`
++      );
+     }),
+ 
+     vscode.commands.registerCommand('trishAI.setAnthropicApiKey', async () => {
+@@ -310,7 +312,7 @@ export function activate(context: vscode.ExtensionContext) {
+       }
+       const notes = librarian.notes.all();
+       if (!notes.length) {
+-        vscode.window.showInformationMessage('No saved notes yet. Use “Librarian: Save Note to Memory”, @librarian /save, or #librarianSave in agent mode.');
++        vscode.window.showInformationMessage('No saved notes yet. Use “Librarian: Save Note to Memory”, /librarian-save, or #librarianSave in agent mode.');
+         return;
+       }
+       const pick = await vscode.window.showQuickPick(
+@@ -389,7 +391,6 @@ export function activate(context: vscode.ExtensionContext) {
+ 
+   // ---- Copilot integration ----
+   context.subscriptions.push(...registerLmTools(lib, () => tracker, refreshTree));
+-  context.subscriptions.push(registerChatParticipant(lib, () => tracker, budget, refreshTree));
+   if (tracker) {
+     context.subscriptions.push(tracker);
+   }
+diff --git a/src/test/core/core.test.ts b/src/test/core/core.test.ts
+index 57cc200..a0eb4ad 100644
+--- a/src/test/core/core.test.ts
++++ b/src/test/core/core.test.ts
+@@ -5,7 +5,7 @@ import * as os from 'os';
+ import * as path from 'path';
+ import { describe, test } from 'node:test';
+ import { analyzeSource, resolveImport } from '../../core/analyzer';
+-import { INSTRUCTIONS_BLOCK, installCopilotInstructions } from '../../core/copilotInstructions';
++import { AGENT_FILE, INSTRUCTIONS_BLOCK, installCopilotInstructions, installLibrarianAgent, SKILLS } from '../../core/copilotInstructions';
+ import { IndexView } from '../../core/indexStore';
+ import { runIndex } from '../../core/indexer';
+ import { Librarian } from '../../core/librarian';
+@@ -222,6 +222,27 @@ describe('copilot instructions', () => {
+     assert.ok(text.startsWith('# Ours\nUse tabs.'));
+     assert.strictEqual(text.match(/librarian:start/g)!.length, 1);
+   });
++
++  test('agent and skills replace the retired chat participant', () => {
++    const root = tmpRepo({ 'a.ts': 'export const a = 1;' });
++    const first = installLibrarianAgent(root);
++    assert.strictEqual(first.created, 1 + SKILLS.length);
++    assert.strictEqual(fs.readFileSync(path.join(root, '.github/agents/librarian.agent.md'), 'utf8'), AGENT_FILE);
++    for (const s of SKILLS) {
++      const text = fs.readFileSync(path.join(root, '.github/skills', s.name, 'SKILL.md'), 'utf8');
++      assert.match(text, /disable-model-invocation: true/);
++    }
++    assert.deepStrictEqual(installLibrarianAgent(root).files, []);
++    const own = path.join(root, '.github/agents/librarian.agent.md');
++    fs.writeFileSync(own, '---\nname: Mine\n---\nmy own agent\n');
++    assert.deepStrictEqual(installLibrarianAgent(root).files, []);
++    assert.match(fs.readFileSync(own, 'utf8'), /my own agent/);
++  });
++
++  test('no chat participant is contributed', () => {
++    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../package.json'), 'utf8'));
++    assert.strictEqual(pkg.contributes.chatParticipants, undefined);
++  });
+ });
+ 
+ describe('package.json contributions', () => {
+diff --git a/src/vscode/chatParticipant.ts b/src/vscode/chatParticipant.ts
+deleted file mode 100644
+index 46f72ee..0000000
+--- a/src/vscode/chatParticipant.ts
++++ /dev/null
+@@ -1,182 +0,0 @@
+-import * as vscode from 'vscode';
+-import { Librarian } from '../core/librarian';
+-import { NoteStore } from '../core/notes';
+-import { absFromRel } from '../core/util';
+-import { TaskTracker } from './taskTracker';
+-
+-const SYSTEM = `You are Librarian, a coding assistant inside VS Code. You are given a context pack built from a
+-pre-indexed codebase: file signatures, short summaries, and why each file was picked. Answer from the pack.
+-When you need code that is not in the pack, name the exact file(s) the user should open or attach (#file) rather than guessing.
+-Be concise; prefer concrete edits with file paths.`;
+-
+-/**
+- * @librarian in Copilot Chat. It runs on whichever model the user picked in the chat (their
+- * firm's Copilot), but sends a compact context pack instead of whole files.
+- *   /context  — build the pack only (no model call), to paste anywhere or attach
+- *   /related  — import graph + co-change history for a file
+- *   /status   — index coverage, freshness and estimated savings
+- *   /save     — summarise this conversation into a saved note (reused by later chats)
+- *   /notes    — list or search saved notes
+- */
+-export function registerChatParticipant(
+-  lib: () => Librarian | undefined,
+-  tracker: () => TaskTracker | undefined,
+-  budget: () => number,
+-  onUsed: () => void
+-): vscode.Disposable {
+-  const handler: vscode.ChatRequestHandler = async (request, context, stream, token) => {
+-    const l = lib();
+-    if (!l) {
+-      stream.markdown('Open a workspace folder first — Librarian needs a codebase to index.');
+-      return;
+-    }
+-
+-    if (request.command === 'status') {
+-      stream.markdown('```\n' + l.status().text + '\n```');
+-      return;
+-    }
+-    if (request.command === 'notes') {
+-      const q = request.prompt.trim();
+-      const hits = q ? l.notes.search(q, 10, 0.05) : l.notes.all().slice(0, 10).map((x) => ({ ...x, score: 1 }));
+-      stream.markdown(
+-        hits.length
+-          ? hits.map((h) => NoteStore.render(h.note, h.layer)).join('\n---\n')
+-          : 'No saved notes yet. Use `@librarian /save`, `#librarianSave` in agent mode, or **Librarian: Save Note to Memory**.'
+-      );
+-      return;
+-    }
+-    if (request.command === 'save') {
+-      await saveConversation(l, request, context, stream, token);
+-      onUsed();
+-      return;
+-    }
+-    if (request.command === 'related') {
+-      const p = request.prompt.trim() || (vscode.window.activeTextEditor ? vscode.workspace.asRelativePath(vscode.window.activeTextEditor.document.uri, false) : '');
+-      stream.markdown(p ? l.getRelated(p) : 'Give a file path, e.g. `@librarian /related src/auth/session.ts`.');
+-      return;
+-    }
+-
+-    const task = request.prompt.trim();
+-    if (!task) {
+-      stream.markdown('Describe the task, e.g. `@librarian add rate limiting to the login endpoint`.');
+-      return;
+-    }
+-
+-    stream.progress('Searching the index…');
+-    const pack = l.findRelevant(task, { budget: budget(), remember: true });
+-    tracker()?.start(pack.taskId);
+-    onUsed();
+-    for (const f of pack.files.slice(0, 12)) {
+-      stream.reference(vscode.Uri.file(absFromRel(l.root, f.path)));
+-    }
+-    const savings = `_Context: ${pack.files.length} file(s), ~${pack.deliveredTokens.toLocaleString()} tokens (reading them in full ≈ ${pack.fullFileTokens.toLocaleString()})._`;
+-
+-    if (request.command === 'context') {
+-      stream.markdown(pack.prompt + '\n\n---\n' + savings);
+-      return;
+-    }
+-
+-    const history: vscode.LanguageModelChatMessage[] = [];
+-    for (const turn of context.history.slice(-6)) {
+-      if (turn instanceof vscode.ChatRequestTurn) {
+-        history.push(vscode.LanguageModelChatMessage.User(turn.prompt));
+-      } else if (turn instanceof vscode.ChatResponseTurn) {
+-        const text = turn.response
+-          .map((p) => (p instanceof vscode.ChatResponseMarkdownPart ? p.value.value : ''))
+-          .join('')
+-          .slice(0, 4000);
+-        if (text) {
+-          history.push(vscode.LanguageModelChatMessage.Assistant(text));
+-        }
+-      }
+-    }
+-
+-    const messages = [
+-      vscode.LanguageModelChatMessage.User(`${SYSTEM}\n\n${pack.prompt}`),
+-      ...history,
+-      vscode.LanguageModelChatMessage.User(task),
+-    ];
+-    try {
+-      const res = await request.model.sendRequest(messages, {}, token);
+-      for await (const chunk of res.text) {
+-        stream.markdown(chunk);
+-      }
+-      stream.markdown('\n\n' + savings);
+-    } catch (err) {
+-      stream.markdown(`Model request failed: ${err instanceof Error ? err.message : String(err)}\n\nHere is the context pack so you can use it elsewhere:\n\n${pack.prompt}`);
+-    }
+-  };
+-
+-  const participant = vscode.chat.createChatParticipant('trishAI.librarian', handler);
+-  participant.iconPath = new vscode.ThemeIcon('book');
+-  return participant;
+-}
+-
+-/** Turn the visible @librarian conversation (plus anything typed after /save) into a note. */
+-async function saveConversation(
+-  l: Librarian,
+-  request: vscode.ChatRequest,
+-  context: vscode.ChatContext,
+-  stream: vscode.ChatResponseStream,
+-  token: vscode.CancellationToken
+-): Promise<void> {
+-  const transcript: string[] = [];
+-  const files = new Set<string>();
+-  for (const turn of context.history) {
+-    if (turn instanceof vscode.ChatRequestTurn) {
+-      transcript.push(`User: ${turn.prompt}`);
+-    } else if (turn instanceof vscode.ChatResponseTurn) {
+-      for (const part of turn.response) {
+-        if (part instanceof vscode.ChatResponseMarkdownPart) {
+-          transcript.push(`Assistant: ${part.value.value.slice(0, 3000)}`);
+-        }
+-      }
+-    }
+-  }
+-  for (const ref of request.references) {
+-    const v = ref.value;
+-    const uri = v instanceof vscode.Uri ? v : v instanceof vscode.Location ? v.uri : undefined;
+-    if (uri) {
+-      files.add(vscode.workspace.asRelativePath(uri, false));
+-    }
+-  }
+-  const extra = request.prompt.trim();
+-
+-  if (transcript.length === 0) {
+-    if (!extra) {
+-      stream.markdown(
+-        'Nothing to save yet: `@librarian` can only see its own conversation.\n\n' +
+-          '- In a **Copilot agent** chat, ask: *“save this to librarian memory”* (or type `#librarianSave`). Copilot writes the summary itself.\n' +
+-          '- For any other chat, use **Copy All** in the chat, then run **Librarian: Save Note to Memory** and choose *From clipboard*.\n' +
+-          '- Or type the note directly: `@librarian /save <what to remember>`.'
+-      );
+-      return;
+-    }
+-    const title = extra.split(/[.\n]/)[0].slice(0, 80);
+-    const { note, updated } = l.notes.save({ title, summary: extra, files: [...files], source: 'chat' });
+-    stream.markdown(`${updated ? 'Updated' : 'Saved'} note **${note.title}**. Future related tasks will include it.`);
+-    return;
+-  }
+-
+-  stream.progress('Summarising this conversation…');
+-  const prompt = `Summarise the conversation below into a note that a future AI chat can reuse to continue this work.
+-Reply in exactly this format:
+-TITLE: <short specific title>
+-FILES: <comma-separated workspace-relative file paths that matter, or none>
+-SUMMARY:
+-<markdown under 250 words: goal, key decisions and why, constraints, what was tried/rejected, current status, next steps>
+-${extra ? `\nThe user added: ${extra}\n` : ''}
+-Conversation:
+-${transcript.join('\n\n').slice(-24000)}`;
+-  let text = '';
+-  const res = await request.model.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], {}, token);
+-  for await (const chunk of res.text) {
+-    text += chunk;
+-  }
+-  const title = /TITLE:\s*(.+)/i.exec(text)?.[1]?.trim() ?? (extra || 'Chat summary').slice(0, 80);
+-  const fileLine = /FILES:\s*(.+)/i.exec(text)?.[1] ?? '';
+-  fileLine.split(',').map((f) => f.trim().replace(/^`|`$/g, '')).filter((f) => f && f.toLowerCase() !== 'none').forEach((f) => files.add(f));
+-  const summary = (/SUMMARY:\s*([\s\S]+)/i.exec(text)?.[1] ?? text).trim();
+-  const { note, updated } = l.notes.save({ title, summary, files: [...files], source: 'chat' });
+-  stream.markdown(`${updated ? 'Updated' : 'Saved'} note:\n\n${NoteStore.render(note, 'local')}\n_Future related tasks will include this automatically. Manage notes with **Librarian: Manage Saved Notes**._`);
+-}
+diff --git a/src/vscode/setupPanel.ts b/src/vscode/setupPanel.ts
+index 7d2b2c9..6048bf4 100644
+--- a/src/vscode/setupPanel.ts
++++ b/src/vscode/setupPanel.ts
+@@ -151,7 +151,7 @@ Choose what writes those summaries. <b>Nothing is used until you save here</b>.
+   <h2>2. Copilot model for background summaries</h2>
+   <p class="muted">Summaries are simple work, so a small model is enough. Badges are a <b>hint from the model name only</b>:
+   VS Code doesn't report premium-request multipliers, so check your firm's Copilot plan before choosing.
+-  Your <b>@librarian</b> chats always use the model you pick in the chat window, not this one.</p>
++  The <b>Librarian</b> agent in Copilot Chat always uses the model you pick in the chat window, not this one.</p>
+   <div id="models"></div>
+   <p><button class="secondary" id="refresh">Refresh list</button></p>
+ </div>

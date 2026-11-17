@@ -10,6 +10,7 @@ and purpose. Use it to keep context small and avoid unnecessary file reads.
    It returns the most relevant files with their signatures and summaries, picked using past changes.
 2. To inspect a specific file's API without reading it, call `#librarianSkeleton` with its path.
 3. Before changing a file's exports, call `#librarianRelated` to see what imports it.
+   To check whether the index is ready or stale, call `#librarianStatus`.
 4. If tools are unavailable, read `.trishAI/shared/files/<path>.skeleton.md` (or `.trishAI/local/files/...`)
    instead of the full source where signatures are enough.
 5. Open full source files only for the parts you need to edit or whose implementation matters.

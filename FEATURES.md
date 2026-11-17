@@ -19,9 +19,9 @@ it gets better at picking files the more you use it.
 | Task memory | Learns which files you actually change for which kind of task | Free |
 | Setup page | Choose provider and exact model; nothing runs until you save | Free |
 | Savings estimate | Replays your own history to measure tokens saved and recall | Free |
-| Copilot tools | `#librarianFind`, `#librarianSkeleton`, `#librarianRelated`, `#librarianSave`, `#librarianNotes` in agent mode | Free (the tool itself) |
+| Copilot tools | `#librarianFind`, `#librarianSkeleton`, `#librarianRelated`, `#librarianStatus`, `#librarianSave`, `#librarianNotes` in agent mode | Free (the tool itself) |
 | Saved chat context | Save a chat's goal, decisions and status. Related future chats get it automatically. | Free, or one request to condense |
-| `@librarian` | Chat participant using your selected Copilot model with a compact pack | One normal chat request |
+| Librarian agent + skills | Custom Copilot agent and `/librarian-*` slash commands that work from a compact pack | One normal chat request |
 | Context packs | Budgeted prompt you can paste into any AI | Free |
 | Firm-wide CI index | Shared index rebuilt on each merge, pulled by everyone | One summary per changed API, firm-wide |
 | MCP server | Same tools for JetBrains / Visual Studio Copilot, Claude Code, etc. | Free |
@@ -67,7 +67,7 @@ it gets better at picking files the more you use it.
   agent knows to check the source.
 
 ### Learning: it gets better as you use it
-- When Librarian gives out context for a task (tool call, `@librarian` or panel), the files you
+- When Librarian gives out context for a task (tool call, agent or panel), the files you
   **save during the next 45 minutes** are recorded against that task.
 - **Learn from git**: every merged commit becomes "commit message → files changed"
   (`Librarian: Learn from Recent Commits`, or automatically in CI).
@@ -79,11 +79,14 @@ it gets better at picking files the more you use it.
   - `#librarianFind`: relevant files for a task
   - `#librarianSkeleton`: a file's API and summary without reading it
   - `#librarianRelated`: imports, importers and co-changed files
-- **`@librarian` chat participant**: answers with whichever Copilot model you picked, from a
-  compact context pack. Sub-commands: `/context` (pack only, no model call), `/related`, `/status`.
+  - `#librarianStatus`: index coverage and freshness
+- **Librarian custom agent** (`.github/agents/librarian.agent.md`): works from the index first, with whichever
+  Copilot model you picked in the chat. It replaces the old `@librarian` chat participant, which VS Code deprecated.
+- **Slash-command skills** (`.github/skills/`): `/librarian-context` (pack only), `/librarian-related`,
+  `/librarian-status`, `/librarian-save`, `/librarian-notes`.
 - **Copilot instructions**: `Librarian: Install Copilot Instructions` adds a managed block to
-  `.github/copilot-instructions.md` telling Copilot to consult the index first. Your own
-  content is kept, and re-running only updates the block.
+  `.github/copilot-instructions.md` telling Copilot to consult the index first, and installs the agent and skills above. Your own
+  content is kept, and re-running only updates what Librarian wrote.
 
 ### Firm-wide index (CI)
 - `templates/librarian-index.yml`: on every merge it re-indexes **only the changed files**,
@@ -96,7 +99,7 @@ it gets better at picking files the more you use it.
 ### CLI & MCP
 - `librarian index | learn | query | status | install-instructions | mcp`. The same core as the
   extension, no VS Code needed.
-- `librarian mcp` exposes the three tools over the Model Context Protocol (stdio).
+- `librarian mcp` exposes the Librarian tools over the Model Context Protocol (stdio).
 
 ### Setup: you choose the model
 - On first run a **Librarian Setup** page opens. Pick the provider (firm's Copilot, Anthropic, or no AI)
@@ -105,7 +108,7 @@ it gets better at picking files the more you use it.
   VS Code doesn't expose premium-request multipliers, so treat it as a hint and confirm against your plan.
 - **Nothing is pre-selected and nothing is auto-picked.** Until you save, only free skeletons are built.
   If your chosen model disappears, summarising stops and asks you. It never falls back to another model.
-- Your `@librarian` chats always use the model you select in the chat window.
+- The Librarian agent always uses the model you select in the chat window.
 
 ### Measuring savings
 - **Librarian: Estimate Token Savings** (or click *Est. tokens saved* in the sidebar, or
@@ -126,14 +129,14 @@ status, next steps) and reuse it in later chats instead of explaining it again.
 | Where you are | How to save |
 |---|---|
 | Copilot **agent mode** chat | Say *"save this to librarian memory"* or type `#librarianSave`. Copilot writes the summary from the full conversation; you confirm before it's stored. |
-| `@librarian` chat | `@librarian /save` summarises the conversation (one request to the chat's model). `@librarian /save <text>` stores your text as is. |
+| Librarian agent or any chat with skills | `/librarian-save` summarises the conversation and saves it (you confirm first). |
 | Any other chat, or an old one | **Copy All** in the chat → **Librarian: Save Note to Memory** → *From clipboard*. Long text can be condensed with your chosen model. |
 | Editor | Select text → right-click → **Save Note to Memory**. |
 | Terminal / CI | `librarian note "<title>" --summary "<text>" --files a.ts,b.ts` |
 
 - **Reused automatically:** relevant notes are added to context packs under *Saved context from earlier
   chats* (up to 30% of the budget), and the files they mention rank higher. Ask explicitly with
-  `#librarianNotes`, `@librarian /notes <query>` or `librarian notes <query>`.
+  `#librarianNotes`, `/librarian-notes <query>` or `librarian notes <query>`.
 - **Not a code change:** notes are kept apart from task memory. They never count as files you changed,
   and they live in the git-ignored `.trishAI/local/notes.json`, so they don't show up in `git status`.
 - **Updates, not duplicates:** saving again with the same title replaces that note.

@@ -2,7 +2,7 @@
   "name": "trinet-ai-smart-assist",
   "displayName": "TrishAI",
   "description": "Librarian: a codebase index that makes GitHub Copilot (and other AI agents) use fewer tokens and fewer turns — and gets smarter as you use it.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "engines": {
     "vscode": "^1.134.0"
   },
@@ -274,37 +274,6 @@
         }
       ]
     },
-    "chatParticipants": [
-      {
-        "id": "trishAI.librarian",
-        "name": "librarian",
-        "fullName": "Librarian",
-        "description": "Answer using the pre-built codebase index (fewer tokens than attaching files)",
-        "isSticky": true,
-        "commands": [
-          {
-            "name": "context",
-            "description": "Build the context pack only — no model call"
-          },
-          {
-            "name": "related",
-            "description": "Imports, importers and co-changed files for a path"
-          },
-          {
-            "name": "status",
-            "description": "Index coverage, freshness and estimated savings"
-          },
-          {
-            "name": "save",
-            "description": "Summarise this conversation into a saved note for future chats"
-          },
-          {
-            "name": "notes",
-            "description": "List or search saved notes"
-          }
-        ]
-      }
-    ],
     "languageModelTools": [
       {
         "name": "librarian_findRelevantFiles",
@@ -387,6 +356,23 @@
           "required": [
             "path"
           ]
+        }
+      },
+      {
+        "name": "librarian_getStatus",
+        "toolReferenceName": "librarianStatus",
+        "displayName": "Librarian: Index Status",
+        "icon": "$(pulse)",
+        "userDescription": "Show how much of the codebase is indexed and how much is stale.",
+        "modelDescription": "Shows the state of the Librarian index: how many source files are indexed, how many are fresh or stale, saved notes, and the estimated tokens saved so far. Use when the user asks whether the index is ready or up to date.",
+        "canBeReferencedInPrompt": true,
+        "tags": [
+          "librarian",
+          "codebase"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
         }
       },
       {

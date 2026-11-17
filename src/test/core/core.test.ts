@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, test } from 'node:test';
 import { analyzeSource, resolveImport } from '../../core/analyzer';
-import { INSTRUCTIONS_BLOCK, installCopilotInstructions } from '../../core/copilotInstructions';
+import { AGENT_FILE, INSTRUCTIONS_BLOCK, installCopilotInstructions, installLibrarianAgent, SKILLS } from '../../core/copilotInstructions';
 import { IndexView } from '../../core/indexStore';
 import { runIndex } from '../../core/indexer';
 import { Librarian } from '../../core/librarian';
@@ -221,6 +221,27 @@ describe('copilot instructions', () => {
     const text = fs.readFileSync(path.join(root, '.github/copilot-instructions.md'), 'utf8');
     assert.ok(text.startsWith('# Ours\nUse tabs.'));
     assert.strictEqual(text.match(/librarian:start/g)!.length, 1);
+  });
+
+  test('agent and skills replace the retired chat participant', () => {
+    const root = tmpRepo({ 'a.ts': 'export const a = 1;' });
+    const first = installLibrarianAgent(root);
+    assert.strictEqual(first.created, 1 + SKILLS.length);
+    assert.strictEqual(fs.readFileSync(path.join(root, '.github/agents/librarian.agent.md'), 'utf8'), AGENT_FILE);
+    for (const s of SKILLS) {
+      const text = fs.readFileSync(path.join(root, '.github/skills', s.name, 'SKILL.md'), 'utf8');
+      assert.match(text, /disable-model-invocation: true/);
+    }
+    assert.deepStrictEqual(installLibrarianAgent(root).files, []);
+    const own = path.join(root, '.github/agents/librarian.agent.md');
+    fs.writeFileSync(own, '---\nname: Mine\n---\nmy own agent\n');
+    assert.deepStrictEqual(installLibrarianAgent(root).files, []);
+    assert.match(fs.readFileSync(own, 'utf8'), /my own agent/);
+  });
+
+  test('no chat participant is contributed', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../package.json'), 'utf8'));
+    assert.strictEqual(pkg.contributes.chatParticipants, undefined);
   });
 });
 
