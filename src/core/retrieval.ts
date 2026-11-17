@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import { IndexView, ResolvedEntry } from './indexStore';
 import { NoteHit, NoteStore } from './notes';
 import { stripFence } from './indexer';
+import { fenceLang, noExports } from './sourceFiles';
 import { TaskMemory, TaskRecord } from './taskMemory';
 import { absFromRel, estimateTokens, hashText, tokenize } from './util';
 
@@ -251,8 +252,8 @@ export function buildPrompt(view: IndexView, task: string, cands: Candidate[], t
     const flag = c.entry.skeletonFresh ? '' : ' ⚠ stale';
     const why = c.reasons.slice(0, 2).join('; ');
     const title = `### \`${c.path}\`${flag}\n_${c.role === 'related' ? 'Related — ' : ''}${why}_\n`;
-    const withCtx = `${title}\n${ctx ? ctx + '\n\n' : ''}\`\`\`typescript\n${skeleton || '// (no exports)'}\n\`\`\`\n`;
-    const skelOnly = `${title}\n\`\`\`typescript\n${skeleton || '// (no exports)'}\n\`\`\`\n`;
+    const withCtx = `${title}\n${ctx ? ctx + '\n\n' : ''}\`\`\`${fenceLang(c.path)}\n${skeleton || noExports(c.path)}\n\`\`\`\n`;
+    const skelOnly = `${title}\n\`\`\`${fenceLang(c.path)}\n${skeleton || noExports(c.path)}\n\`\`\`\n`;
     const options = c.role === 'primary' ? [withCtx, skelOnly] : [skelOnly];
     const fit = options.find((o) => used + estimateTokens(o) <= budget);
     if (fit) {

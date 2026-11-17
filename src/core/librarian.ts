@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import { ContextPolicy, IndexView } from './indexStore';
 import { stripFence } from './indexer';
 import { buildPrompt, BuiltPrompt, markFreshness, retrieve, SearchIndex } from './retrieval';
-import { listSourceFiles } from './sourceFiles';
+import { fenceLang, listSourceFiles } from './sourceFiles';
 import { NoteStore } from './notes';
 import { TaskMemory, TaskRecord } from './taskMemory';
 import { absFromRel, hashText } from './util';
@@ -66,7 +66,7 @@ export class Librarian {
         }
         const ctx = this.view.readContext(e)?.replace(/^# Context:.*\n(_.*_\n)?/, '').trim();
         const flag = e.skeletonFresh ? '' : ' ⚠ stale — file changed since indexing';
-        return `### \`${p}\`${flag}\n${ctx ? ctx + '\n\n' : ''}\`\`\`typescript\n${stripFence(this.view.readSkeleton(e) ?? '')}\n\`\`\`\n`;
+        return `### \`${p}\`${flag}\n${ctx ? ctx + '\n\n' : ''}\`\`\`${fenceLang(p)}\n${stripFence(this.view.readSkeleton(e) ?? '')}\n\`\`\`\n`;
       })
       .join('\n');
   }

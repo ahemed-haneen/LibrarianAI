@@ -1,7 +1,8 @@
 import * as ts from 'typescript';
+import { analyzePython, resolvePythonImport } from './pythonAnalyzer';
 
 export interface SourceAnalysis {
-  /** Signature-only view of the file's public surface (TypeScript-ish syntax). */
+  /** Signature-only view of the file's public surface (TypeScript-ish syntax; Python-ish for .py files). */
   skeleton: string;
   /** Exported symbol names (used for search). */
   exportNames: string[];
@@ -144,6 +145,9 @@ function describeInitializer(init: ts.Expression | undefined, sf: ts.SourceFile)
 }
 
 export function analyzeSource(fileName: string, content: string): SourceAnalysis {
+  if (/\.py$/.test(fileName)) {
+    return analyzePython(content, fileName);
+  }
   const sf = ts.createSourceFile(fileName, content, ts.ScriptTarget.Latest, true, scriptKind(fileName));
   const lines: string[] = [];
   const exportNames = new Set<string>();
@@ -290,8 +294,12 @@ const RESOLVE_EXT = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs
 /**
  * Resolve a relative import specifier to a known source file (posix, root-relative).
  * Handles extensionless imports, `/index` files and Node16-style `.js` specifiers that point at `.ts`.
+ * Python specifiers (`py:` prefix, from pythonAnalyzer) are resolved by package rules instead.
  */
 export function resolveImport(fromRel: string, spec: string, known: Set<string>): string | undefined {
+  if (spec.startsWith('py:')) {
+    return resolvePythonImport(fromRel, spec, known);
+  }
   if (!spec.startsWith('.')) {
     return undefined;
   }

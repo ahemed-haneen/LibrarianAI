@@ -32,7 +32,7 @@ Reply in markdown with exactly these sections, under 180 words total:
 **Responsibilities** — up to 5 bullets.
 **Use when** — up to 4 bullets describing kinds of tasks that would need to change or read this file (use domain words a developer would type).
 **Gotchas** — up to 2 bullets of non-obvious behaviour, or "None".
-Do not repeat the signatures.`;
+Do not repeat the signatures.${relativePath.endsWith('.py') ? '\nFor Python backends, name any HTTP routes, database tables or models, task/queue names and config keys the file defines or uses: developers search by those.' : ''}`;
 }
 
 export class AnthropicClient implements LlmClient {

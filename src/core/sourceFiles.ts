@@ -6,16 +6,26 @@ import { toPosix } from './util';
 /** Directory that holds every Librarian artefact, relative to the workspace root. */
 export const INDEX_DIR = '.trishAI';
 
-export const SOURCE_EXT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+export const SOURCE_EXT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py)$/;
+
+/** Code-fence language for a file's skeleton. */
+export function fenceLang(rel: string): 'python' | 'typescript' {
+  return rel.endsWith('.py') ? 'python' : 'typescript';
+}
+
+/** Placeholder shown when a file has no public surface. */
+export function noExports(rel: string): string {
+  return rel.endsWith('.py') ? '# (no public names)' : '// (no exports)';
+}
 
 const IGNORED_DIRS = new Set([
   'node_modules', 'dist', 'build', 'out', 'coverage', 'vendor', 'bower_components',
-  '__pycache__', 'target', 'tmp', 'temp',
+  '__pycache__', 'target', 'tmp', 'temp', 'venv', 'site-packages',
 ]);
 
 /** Single source of truth for "is this a file Librarian indexes?" — used by the tree, generators, CLI and CI. */
 export function isSourcePath(rel: string): boolean {
-  if (!SOURCE_EXT.test(rel) || /\.d\.[mc]?ts$/.test(rel) || /\.min\.js$/.test(rel)) {
+  if (!SOURCE_EXT.test(rel) || /\.d\.[mc]?ts$/.test(rel) || /\.min\.js$/.test(rel) || /_pb2(_grpc)?\.py$/.test(rel)) {
     return false;
   }
   const parts = rel.split('/');

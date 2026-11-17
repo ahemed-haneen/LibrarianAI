@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, test } from 'node:test';
 import { analyzeSource, resolveImport } from '../../core/analyzer';
+import { logicalLines } from '../../core/pythonAnalyzer';
 import { AGENT_FILE, INSTRUCTIONS_BLOCK, installCopilotInstructions, installLibrarianAgent, SKILLS } from '../../core/copilotInstructions';
 import { IndexView } from '../../core/indexStore';
 import { runIndex } from '../../core/indexer';
@@ -88,6 +89,149 @@ describe('analyzer', () => {
   });
 });
 
+describe('python support', () => {
+  const sample = `"""Pay run endpoints.
+
+Second paragraph mentioning def fake(): here.
+"""
+import os, logging
+from fastapi import APIRouter, Depends
+from app.models.payrun import PayRun, \\
+    PayRunItem
+from .schemas import (
+    PayRunCreate,
+    PayRunOut as Out,
+)
+from .. import deps
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/payruns")
+PAGE_SIZE: int = 50
+_private = 3
+
+
+@router.post("/", response_model=Out)
+async def create_payrun(
+    body: PayRunCreate,
+    db: Session = Depends(get_db),
+    *,
+    flag: bool = False,
+) -> PayRun:
+    """Create a pay run. More detail."""
+    text = """
+def not_real(): pass
+"""
+    from app.services import pay_service
+    return pay_service.create(db, body)
+
+
+def _helper(): ...
+
+
+@dataclass(frozen=True)
+class PayRunService(BaseService):
+    """Business logic for pay runs."""
+    __tablename__ = "payruns"
+    id = Column(Integer, primary_key=True)
+    name: str
+
+    def __init__(self, db: Session, *, strict=False):
+        self.db = db
+
+    @property
+    def total(self) -> int:
+        return 1
+
+    @total.setter
+    def total(self, v): ...
+
+    @staticmethod
+    async def soft_delete(payrun_id: int) -> None:
+        """Soft delete a pay run."""
+        def inner(): ...
+
+    def _internal(self): ...
+
+
+if __name__ == "__main__":
+    def main(): ...
+`;
+
+  test('extracts public surface, docstrings, decorators and class fields', () => {
+    const a = analyzeSource('backend/app/api/payrun.py', sample);
+    assert.match(a.skeleton, /^# module: Pay run endpoints\./);
+    assert.match(a.skeleton, /@router\.post\("\/", response_model=Out\)/);
+    assert.match(a.skeleton, /async def create_payrun\(body: PayRunCreate, db: Session = Depends\(get_db\), \*, flag: bool = False\) -> PayRun: \.\.\.  # Create a pay run\./);
+    assert.match(a.skeleton, /router = APIRouter\(prefix="\/payruns"\)/);
+    assert.match(a.skeleton, /PAGE_SIZE: int = 50/);
+    assert.match(a.skeleton, /@dataclass\(frozen=True\)\nclass PayRunService\(BaseService\):  # Business logic for pay runs\./);
+    assert.match(a.skeleton, /__tablename__ = "payruns"/);
+    assert.match(a.skeleton, /id = Column\(Integer, primary_key=True\)/);
+    assert.match(a.skeleton, / {4}def __init__\(db: Session, \*, strict = False\): \.\.\./);
+    assert.match(a.skeleton, / {4}@property\n {4}def total\(\) -> int/);
+    assert.match(a.skeleton, / {4}@staticmethod\n {4}async def soft_delete\(payrun_id: int\) -> None: \.\.\.  # Soft delete a pay run\./);
+    // private names, bodies, nested functions, strings that look like code, and __main__ blocks stay out
+    assert.doesNotMatch(a.skeleton, /_helper|_internal|_private|not_real|inner|main|logger|self\.db|return/);
+    assert.strictEqual((a.skeleton.match(/def total/g) ?? []).length, 1, 'setter is not repeated');
+    assert.deepStrictEqual(a.exportNames.sort(), ['PAGE_SIZE', 'PayRunService', 'create_payrun', 'router']);
+  });
+
+  test('collects absolute, relative and function-local imports', () => {
+    const a = analyzeSource('backend/app/api/payrun.py', sample);
+    for (const spec of ['py:os', 'py:app.models.payrun', 'py:app.models.payrun.PayRunItem', 'py:.schemas', 'py:.schemas.PayRunOut', 'py:..', 'py:..deps', 'py:app.services.pay_service']) {
+      assert.ok(a.importSpecifiers.includes(spec), spec);
+    }
+  });
+
+  test('imports resolve by package rules, nearest source root, and skip the standard library', () => {
+    const known = new Set([
+      'backend/app/__init__.py', 'backend/app/api/__init__.py', 'backend/app/api/payrun.py', 'backend/app/api/schemas.py',
+      'backend/app/deps.py', 'backend/app/models/payrun.py', 'backend/app/logging.py',
+      'svc2/app/models/payrun.py', 'svc2/app/main.py', 'web/src/x.ts',
+    ]);
+    const from = 'backend/app/api/payrun.py';
+    assert.strictEqual(resolveImport(from, 'py:app.models.payrun', known), 'backend/app/models/payrun.py');
+    assert.strictEqual(resolveImport('svc2/app/main.py', 'py:app.models.payrun', known), 'svc2/app/models/payrun.py', 'nearest root wins');
+    assert.strictEqual(resolveImport(from, 'py:.schemas', known), 'backend/app/api/schemas.py');
+    assert.strictEqual(resolveImport(from, 'py:..deps', known), 'backend/app/deps.py');
+    assert.strictEqual(resolveImport(from, 'py:..', known), 'backend/app/__init__.py');
+    assert.strictEqual(resolveImport(from, 'py:app.models.payrun.PayRun', known), undefined, 'a name, not a module');
+    assert.strictEqual(resolveImport(from, 'py:logging', known), undefined, 'stdlib is never matched to repo files');
+    assert.strictEqual(resolveImport(from, 'py:fastapi', known), undefined);
+    assert.strictEqual(resolveImport(from, 'py:.....x', known), undefined);
+  });
+
+  test('package __init__.py re-exports are kept as its surface', () => {
+    const a = analyzeSource('app/api/__init__.py', '"""API package."""\nfrom .payrun import router as payrun_router, create_payrun\n__all__ = ["extra"]\n');
+    assert.match(a.skeleton, /from \.payrun import router as payrun_router, create_payrun/);
+    assert.deepStrictEqual(a.exportNames.sort(), ['create_payrun', 'extra', 'payrun_router']);
+  });
+
+  test('logical lines handle continuations, comments and multi-line strings', () => {
+    const lines = logicalLines('x = (1,\n  2)  # comment with "quote\ny = """a\nb"""\nz = 1 + \\\n  2\n');
+    assert.deepStrictEqual(lines.map((l) => l.text), ['x = (1, 2)', 'y = """a b"""', 'z = 1 + 2']);
+  });
+
+  test('a mixed Python + TypeScript repo indexes, links and retrieves both', async () => {
+    const root = tmpRepo({
+      'backend/app/__init__.py': '',
+      'backend/app/models/payrun.py': 'class PayRun:\n    """A pay run."""\n    __tablename__ = "payruns"\n    deleted_at = Column(DateTime)\n',
+      'backend/app/services/payrun_service.py': 'from app.models.payrun import PayRun\n\ndef soft_delete_payrun(payrun_id: int) -> None:\n    """Soft delete a pay run."""\n    ...\n',
+      'backend/app/api/billing.py': 'def create_invoice(client_id: int): ...\n',
+      'web/src/ui.ts': 'export function renderTable(rows: string[]): string { return ""; }\n',
+    });
+    await runIndex({ root, layer: 'local' });
+    const lib = new Librarian(root);
+    assert.deepStrictEqual(lib.neighbours('backend/app/services/payrun_service.py'), ['backend/app/models/payrun.py']);
+    const r = lib.findRelevant('add soft delete for pay runs');
+    assert.strictEqual(r.files[0].path, 'backend/app/services/payrun_service.py');
+    assert.ok(r.files.some((f) => f.path === 'backend/app/models/payrun.py'), 'import graph pulls in the model');
+    assert.match(r.prompt, /```python\n/);
+    assert.match(lib.getSkeletons(['backend/app/models/payrun.py']), /```python\nclass PayRun:/);
+    assert.match(lib.status().text, /Source files: 5/);
+  });
+});
+
 describe('source filter', () => {
   test('one rule for every component', () => {
     assert.ok(isSourcePath('src/a.ts'));
@@ -97,6 +241,10 @@ describe('source filter', () => {
     assert.ok(!isSourcePath('.trishAI/shared/files/a.ts'));
     assert.ok(!isSourcePath('dist/extension.js'));
     assert.ok(!isSourcePath('README.md'));
+    assert.ok(isSourcePath('backend/app/api/payrun.py'));
+    assert.ok(!isSourcePath('backend/.venv/lib/x.py'));
+    assert.ok(!isSourcePath('venv/lib/site-packages/x.py'));
+    assert.ok(!isSourcePath('backend/app/pb/thing_pb2.py'));
   });
 
   test('tokenize splits identifiers and stems', () => {

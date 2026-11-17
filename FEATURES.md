@@ -12,7 +12,7 @@ it gets better at picking files the more you use it.
 
 | Area | What you get | AI cost |
 |---|---|---|
-| Skeletons | Exported API of every TS/JS file, refreshed on save | Free |
+| Skeletons | Exported API of every TypeScript, JavaScript and Python file, refreshed on save | Free |
 | Import graph | What each file imports and what imports it | Free |
 | AI summaries | ~150-word "what / responsibilities / use when / gotchas" per file | Once per API change |
 | Retrieval | Ranks files for a task: BM25 + names + graph + task memory | Free |
@@ -41,11 +41,26 @@ it gets better at picking files the more you use it.
 - **CommonJS**: `module.exports = { … }`, `exports.name = …`, `require()`.
 - **First-sentence JSDoc** of each export is kept, a cheap, high-signal hint.
 - Private members (`private`, `#field`) and implementation bodies are dropped.
-- Extensions: `.ts .tsx .mts .cts .js .jsx .mjs .cjs` (`.d.ts` and minified files skipped).
+- Extensions: `.ts .tsx .mts .cts .js .jsx .mjs .cjs` and `.py` (`.d.ts`, minified files, virtualenvs and generated `*_pb2.py` skipped).
+
+### Python
+- **No Python install needed.** Skeletons come from a built-in parser that reads Python's indentation, so they
+  work the same in VS Code, the CLI and CI.
+- Kept: public functions (`async`, type hints, defaults shortened), classes with bases, public methods and
+  class-level fields (so ORM/Pydantic/dataclass models show their columns and `__tablename__`), module constants
+  and objects such as `router = APIRouter(prefix="/payruns")`, and the first sentence of each docstring.
+- **Decorators are kept**, so HTTP routes (`@router.post("/payruns")`), tasks and properties are searchable.
+- Dropped: `_private` names, function bodies, nested functions, `if __name__ == "__main__":` blocks.
+- `__init__.py` re-exports (`from .x import A`) and `__all__` count as that package's public names.
+- **Imports** (absolute, relative and function-local) become graph edges. Absolute imports are matched by module
+  path, so `src/`, `backend/app/` and flat layouts all work, and in a repo with several services the nearest one wins.
+  Standard-library names are never matched to repo files.
+- Limits: definitions inside top-level `if`/`try` blocks and dynamic imports (`importlib`) are not seen.
 
 ### Import graph
 - Relative imports are resolved to real files: extensionless, `/index.*`, and Node16-style `.js`
   specifiers that point at `.ts`.
+- Python: `import a.b`, `from a import b`, and relative `from .x import y` / `from .. import z`.
 - Used to pull in neighbours of the best matches and to answer "what uses this?".
 
 ### AI summaries (optional)

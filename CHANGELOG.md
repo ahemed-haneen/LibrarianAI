@@ -9,6 +9,7 @@
 - **Install Copilot Instructions** (and `librarian install-instructions`) now also writes the agent and skills. Files you edited yourself (marker removed) are never overwritten.
 
 ### Added
+- **Python support.** `.py` files are now indexed: skeletons (functions, classes, methods, class fields, decorators such as HTTP routes, docstring summaries), the import graph (absolute and relative imports) and retrieval. Uses a built-in parser, so no Python install is needed. Virtualenvs and generated `*_pb2.py` files are skipped. Existing indexes pick up Python files on the next **Index Workspace** / **Build Skeletons Only**.
 - `#librarianStatus` tool (`librarian_getStatus`), also served over MCP.
 
 ## [0.3.0]

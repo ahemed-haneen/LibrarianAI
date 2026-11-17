@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import { analyzeSource, resolveImport } from './analyzer';
 import { ContextPolicy, FileRecord, IndexView, LayerName } from './indexStore';
 import { contextPrompt, LlmClient } from './llm';
-import { listSourceFiles } from './sourceFiles';
+import { fenceLang, listSourceFiles, noExports } from './sourceFiles';
 import { absFromRel, estimateTokens, hashText, mapLimit } from './util';
 
 export interface IndexOptions {
@@ -40,7 +40,7 @@ export interface IndexResult {
 
 export function skeletonMarkdown(rel: string, skeleton: string, sourceHash: string): string {
   // Deliberately no timestamp: identical input -> identical file, so CI commits only real changes.
-  return `# Skeleton: \`${rel}\`\n<!-- source-hash: ${sourceHash} -->\n\n\`\`\`typescript\n${skeleton || '// (no exports)'}\n\`\`\`\n`;
+  return `# Skeleton: \`${rel}\`\n<!-- source-hash: ${sourceHash} -->\n\n\`\`\`${fenceLang(rel)}\n${skeleton || noExports(rel)}\n\`\`\`\n`;
 }
 
 export function contextMarkdown(rel: string, body: string, model: string): string {
