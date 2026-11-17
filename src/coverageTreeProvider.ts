@@ -28,6 +28,8 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
   private files: string[] = [];
   private states = new Map<string, FileState>();
   private hashCache = new Map<string, { mtime: number; size: number; hash: string }>();
+  /** Files whose AI summary exists but is out of date. */
+  private outdatedSummaries = 0;
 
   constructor(private root: string | undefined, private lib: () => Librarian | undefined) {}
 
@@ -61,8 +63,12 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
     l.view.reload();
     this.files = listSourceFiles(this.root!);
     this.states.clear();
+    this.outdatedSummaries = 0;
     for (const f of this.files) {
       const e = l.view.resolve(f, this.hashOf(f));
+      if (e && e.contextLayer && !e.contextFresh) {
+        this.outdatedSummaries++;
+      }
       this.states.set(f, !e ? 'unmapped' : !e.skeletonFresh ? 'stale' : e.contextFresh ? 'full' : 'skeleton');
     }
   }
@@ -88,13 +94,34 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
     const fresh = counts.skeleton + counts.full;
     const pct = total ? (fresh / total) * 100 : 0;
 
-    const ready = new CoverageNode(`AI Readiness: ${pct.toFixed(1)}%`, vscode.TreeItemCollapsibleState.None);
-    ready.description = `${fresh}/${total} fresh · ${counts.full} summarised${counts.stale ? ` · ${counts.stale} stale` : ''}`;
-    ready.tooltip = 'Only files whose skeleton matches the current source count as ready. Stale files changed since they were indexed.';
-    ready.iconPath = new vscode.ThemeIcon(
+    // Two separate measures: the free skeleton index, and the optional AI summaries (they cost model requests).
+    const skeletons = new CoverageNode(`Skeletons: ${pct.toFixed(1)}%`, vscode.TreeItemCollapsibleState.None);
+    skeletons.description = `${fresh}/${total} fresh${counts.stale ? ` · ${counts.stale} stale` : ''}${counts.unmapped ? ` · ${counts.unmapped} not indexed` : ''}`;
+    skeletons.tooltip =
+      'The free signature index of each file (functions, classes, imports). Only files whose skeleton matches the current source count as fresh. ' +
+      'This says nothing about AI summaries: see the next row.';
+    skeletons.iconPath = new vscode.ThemeIcon(
       pct > 75 ? 'pass-filled' : pct > 25 ? 'history' : 'info',
       new vscode.ThemeColor(pct > 75 ? 'charts.green' : pct > 25 ? 'charts.yellow' : 'charts.orange')
     );
+
+    const summaryPct = total ? (counts.full / total) * 100 : 0;
+    const cfg = vscode.workspace.getConfiguration('trishAI');
+    const provider = cfg.get<string>('aiProvider', 'copilot');
+    const modelChosen = provider === 'anthropic' || (provider === 'copilot' && cfg.get<string>('copilotModel', '').trim() !== '');
+    const summaries = new CoverageNode(`AI summaries: ${summaryPct.toFixed(1)}%`, vscode.TreeItemCollapsibleState.None);
+    summaries.description = `${counts.full}/${total} summarised${this.outdatedSummaries ? ` · ${this.outdatedSummaries} outdated` : ''}`;
+    summaries.tooltip =
+      'Short "what it does / use when" summaries written by the AI model you chose. They make file matching better but cost model requests, ' +
+      'so they only run when you ask. ' +
+      (modelChosen ? 'Click to summarise the files that need it (only changed files cost anything).' : 'Click to choose a provider and model first.');
+    summaries.iconPath = new vscode.ThemeIcon(
+      'sparkle',
+      new vscode.ThemeColor(summaryPct > 75 ? 'charts.green' : summaryPct > 0 ? 'charts.yellow' : 'disabledForeground')
+    );
+    summaries.command = modelChosen
+      ? { command: 'trishAI.indexWorkspace', title: 'Index workspace' }
+      : { command: 'trishAI.openSetup', title: 'Choose model' };
 
     const s = this.lib()!.view.layers.local.stats();
     const saved = Math.max(0, s.estTokensIfFullFiles - s.estTokensDelivered);
@@ -104,7 +131,7 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
     savings.iconPath = new vscode.ThemeIcon('graph');
     savings.command = { command: 'trishAI.estimateSavings', title: 'Estimate token savings' };
 
-    const nodes = [ready, savings];
+    const nodes = [skeletons, summaries, savings];
     if (counts.stale) {
       const stale = new CoverageNode(`Refresh ${counts.stale} stale file(s)`, vscode.TreeItemCollapsibleState.None);
       stale.iconPath = new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.orange'));
@@ -135,7 +162,8 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
       const n = new CoverageNode(d.split('/').pop()!, vscode.TreeItemCollapsibleState.Collapsed, absFromRel(this.root!, d), d);
       const inside = this.files.filter((f) => f.startsWith(d + '/'));
       const ready = inside.filter((f) => ['skeleton', 'full'].includes(this.states.get(f)!)).length;
-      n.description = `${ready}/${inside.length}`;
+      const summarised = inside.filter((f) => this.states.get(f) === 'full').length;
+      n.description = `${ready}/${inside.length}${summarised ? ` · ${summarised} summarised` : ''}`;
       n.contextValue = 'codeFolder';
       n.iconPath = new vscode.ThemeIcon('folder');
       return n;

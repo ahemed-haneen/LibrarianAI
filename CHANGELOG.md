@@ -7,6 +7,8 @@
   - the default answer → the **Librarian** custom agent (`.github/agents/librarian.agent.md`), which calls `#librarianFind` first;
   - `/context`, `/related`, `/status`, `/save`, `/notes` → skills `/librarian-context`, `/librarian-related`, `/librarian-status`, `/librarian-save`, `/librarian-notes` (`.github/skills/`).
 - **Install Copilot Instructions** (and `librarian install-instructions`) now also writes the agent and skills. Files you edited yourself (marker removed) are never overwritten.
+- **The sidebar's single "AI Readiness %" is now two rows:** **Skeletons %** (free index, fresh vs stale) and **AI summaries %** (summarised vs outdated). The old row reached 100% with zero AI summaries, which read as "fully AI-ready". Clicking the summaries row indexes with your chosen model, or opens Setup if none is chosen.
+- The Librarian agent now offers once, when a substantial task is finished, to save it to Librarian memory (`#librarianSave`).
 
 ### Added
 - **Savings report explains itself.** **Estimate Token Savings** now says why tokens were not saved: the saving with perfect retrieval versus the actual one (so you can tell fixable retrieval misses from structural limits), each task's main cause, every missed file with its reason (ranked below the pack limit, neighbour limit, no public names, too few searchable words, no shared wording), the files missed most often, which commits were left out and why (with the file types involved), and a numbered list of suggestions. A JSON copy of the diagnostics ends the report, so it can be pasted into a chat or issue.
