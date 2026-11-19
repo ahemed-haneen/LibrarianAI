@@ -45,6 +45,8 @@ export interface SavingsCase {
   ref?: string;
   changed: string[];
   found: string[];
+  /** Subset of `found` whose skeleton is actually shown in the pack (not just listed by path). */
+  foundExpanded: string[];
   packTokens: number;
   without: number;
   withLibrarian: number;
@@ -112,6 +114,18 @@ export interface SavingsOptions {
   tokenizerLabel?: string;
   /** Optional input price, to show an indicative cost. */
   costPerMillionTokens?: number;
+  /** Replay exactly these commits (oldest first), e.g. from a pin file, instead of "the last N". */
+  refs?: string[];
+  /**
+   * Stricter leave-one-out: a task may only learn from remembered tasks that happened BEFORE it
+   * (default is plain leave-one-out, which also lets it learn from later commits).
+   */
+  temporal?: boolean;
+  /** Count a file as found only when its skeleton is shown in the pack, not when it is merely listed by path. */
+  strict?: boolean;
+  /** Override pack limits (used to compare settings in the benchmark). */
+  maxFiles?: number;
+  maxRelated?: number;
 }
 
 export async function estimateSavings(lib: Librarian, opts: SavingsOptions = {}): Promise<SavingsReport> {
@@ -137,14 +151,24 @@ export async function estimateSavings(lib: Librarian, opts: SavingsOptions = {})
     return n;
   };
 
-  const candidates: { task: string; files: string[]; source: 'commit' | 'session'; ref?: string; id?: string; otherExts: Record<string, number> }[] = [];
+  const candidates: { task: string; files: string[]; source: 'commit' | 'session'; ref?: string; id?: string; at?: string; otherExts: Record<string, number> }[] = [];
   let skipped = 0;
   const skips: { reason: SkipReason; task: string; extensions?: Record<string, number> }[] = [];
   try {
-    const git = readGitTasks(lib.root, String(opts.commits ?? 50));
-    skipped += git.skipped;
-    git.skips.forEach((k) => skips.push({ reason: k.reason, task: k.task, extensions: k.extensions }));
-    git.tasks.forEach((t) => candidates.push({ task: t.task, files: t.files, source: 'commit', ref: t.ref, otherExts: t.otherExts }));
+    const pinned = opts.refs?.length ? new Set(opts.refs) : undefined;
+    // A pin replays exactly its commits: read from the oldest one forward, then keep only the pinned ones.
+    let git: ReturnType<typeof readGitTasks>;
+    try {
+      git = readGitTasks(lib.root, pinned ? `${opts.refs![0]}^..HEAD` : String(opts.commits ?? 50));
+    } catch {
+      // the oldest pinned commit is a root commit (no parent): read the whole history instead
+      git = readGitTasks(lib.root, '1000000');
+    }
+    const keep = <T extends { ref: string }>(x: T) => !pinned || pinned.has(x.ref);
+    const kept = git.tasks.filter(keep);
+    skipped += pinned ? 0 : git.skipped;
+    git.skips.filter(keep).forEach((k) => skips.push({ reason: k.reason, task: k.task, extensions: k.extensions }));
+    kept.forEach((t) => candidates.push({ task: t.task, files: t.files, source: 'commit', ref: t.ref, at: t.at, otherExts: t.otherExts }));
   } catch {
     // not a git repository: sessions only
   }
@@ -179,12 +203,17 @@ export async function estimateSavings(lib: Librarian, opts: SavingsOptions = {})
       budget: opts.budget,
       track: false,
       useNotes: false,
-      memoryFilter: (t) => (c.ref ? t.ref !== c.ref : t.id !== c.id) && t.task !== c.task,
+      maxFiles: opts.maxFiles,
+      maxRelated: opts.maxRelated,
+      memoryFilter: (t) =>
+        (c.ref ? t.ref !== c.ref : t.id !== c.id) && t.task !== c.task && (!opts.temporal || !c.at || !t.at || t.at < c.at),
       onRanked: (r) => (ranking = r),
     });
     const inPack = new Set(pack.files.map((f) => f.path));
-    const found = changed.filter((f) => inPack.has(f));
-    const missedPaths = changed.filter((f) => !inPack.has(f));
+    const listed = changed.filter((f) => inPack.has(f));
+    const foundExpanded = listed.filter((f) => pack.prompt.includes('### `' + f + '`'));
+    const found = opts.strict ? foundExpanded : listed;
+    const missedPaths = changed.filter((f) => !found.includes(f));
 
     // With Librarian: pack + edit reads + fallback exploration for misses.
     const counted = new Set(changed);
@@ -219,7 +248,7 @@ export async function estimateSavings(lib: Librarian, opts: SavingsOptions = {})
       saved > 0 ? 'saved' : explorationTokens === 0 ? 'nothing-to-explore' : ceilingSaved <= 0 ? 'pack-larger-than-exploration' : 'retrieval-misses';
 
     cases.push({
-      task: c.task, source: c.source, ref: c.ref, changed, found, packTokens, without, withLibrarian,
+      task: c.task, source: c.source, ref: c.ref, changed, found, foundExpanded, packTokens, without, withLibrarian,
       explorationTokens, fallbackTokens, ceilingSaved, cause, missed, dropped, vague,
       capacityLimited: changed.length > (DEFAULT_MAX_FILES + DEFAULT_MAX_RELATED),
       otherExts: c.otherExts,

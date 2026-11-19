@@ -5,11 +5,13 @@ import { buildPrompt, BuiltPrompt, markFreshness, retrieve, SearchIndex } from '
 import { fenceLang, listSourceFiles } from './sourceFiles';
 import { NoteStore } from './notes';
 import { TaskMemory, TaskRecord } from './taskMemory';
+import { gitWorkContext, WorkContext } from './workContext';
 import { absFromRel, hashText } from './util';
 
 export interface FindOptions {
   budget?: number;
   maxFiles?: number;
+  maxRelated?: number;
   /** Record this as a task so later edits teach the memory. */
   remember?: boolean;
   /** Count this pack in the usage stats (default true; off for estimates). */
@@ -17,6 +19,11 @@ export interface FindOptions {
   memoryFilter?: (t: TaskRecord) => boolean;
   /** Include saved notes (default true; off for the savings estimate, which replays code changes). */
   useNotes?: boolean;
+  /**
+   * Use what the developer is doing right now (branch, modified files, uncommitted diff, open files) as extra
+   * ranking input: pass a context, or true to read it from git. Off by default (the benchmark replays past commits).
+   */
+  work?: WorkContext | boolean;
   /** Receives the full ranking before the pack is cut (diagnostics only). */
   onRanked?: (ranked: [string, { score: number; reasons: string[] }][]) => void;
 }
@@ -34,6 +41,8 @@ export class Librarian {
   readonly memory: TaskMemory;
   readonly notes: NoteStore;
   private search: SearchIndex;
+  /** Set by the editor integration: files currently open. */
+  openFiles: () => string[] = () => [];
 
   constructor(readonly root: string, policy: ContextPolicy = 'onApiChange', private notesEnabled = true) {
     this.view = new IndexView(root, policy);
@@ -42,13 +51,22 @@ export class Librarian {
     this.search = new SearchIndex(this.view);
   }
 
+  private resolveWork(w: FindOptions['work']): WorkContext | undefined {
+    if (!w) {
+      return undefined;
+    }
+    const base = w === true ? gitWorkContext(this.root) : w;
+    const open = this.openFiles().filter((p) => this.view.resolve(p));
+    return { ...base, openFiles: [...new Set([...(base.openFiles ?? []), ...open])] };
+  }
+
   findRelevant(task: string, opts: FindOptions = {}): FindResult {
     const noteHits = (opts.useNotes ?? this.notesEnabled) ? this.notes.search(task, 3) : [];
     const extraBoosts = new Map<string, { score: number; because: string }>();
     for (const h of noteHits) {
       h.note.files.forEach((f) => extraBoosts.set(f, { score: 2 + h.score * 4, because: `in saved note “${h.note.title.slice(0, 50)}”` }));
     }
-    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles, memoryFilter: opts.memoryFilter, extraBoosts, onRanked: opts.onRanked });
+    const cands = retrieve(this.search, this.view, this.memory, task, { maxFiles: opts.maxFiles, maxRelated: opts.maxRelated, memoryFilter: opts.memoryFilter, work: this.resolveWork(opts.work), extraBoosts, onRanked: opts.onRanked });
     markFreshness(this.root, this.view, cands);
     const built = buildPrompt(this.view, task, cands, this.search.size, opts.budget, noteHits);
     if (opts.track !== false) {

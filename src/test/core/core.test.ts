@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, test } from 'node:test';
+import { buildAliasResolver } from '../../core/aliases';
 import { analyzeSource, resolveImport } from '../../core/analyzer';
 import { logicalLines } from '../../core/pythonAnalyzer';
 import { AGENT_FILE, INSTRUCTIONS_BLOCK, installCopilotInstructions, installLibrarianAgent, SKILLS } from '../../core/copilotInstructions';
@@ -16,6 +17,10 @@ import { estimateSavings } from '../../core/savings';
 import { isSourcePath } from '../../core/sourceFiles';
 import { TOOL_DEFS } from '../../core/tools';
 import { tokenize } from '../../core/util';
+import { branchWords, gitWorkContext } from '../../core/workContext';
+import { DEFAULT_DATA_EXT, enabledDataExt, isNoisyDataPath } from '../../core/dataFiles';
+import { capSkeleton, isTestPath, stemKey } from '../../core/retrieval';
+import { benchRun, compareRuns, recoveredByReason, BenchRun } from '../../core/bench';
 
 class FakeLlm implements LlmClient {
   label = 'fake';
@@ -352,10 +357,13 @@ describe('retrieval and memory', () => {
   });
 
   test('budget keeps packs small', async () => {
-    const big = Array.from({ length: 80 }, (_, i) => `export function handler${i}(input: RequestPayload${i}): ResponsePayload${i} { return null as any; }`).join('\n');
-    const root = tmpRepo({ 'src/a.ts': big, 'src/b.ts': big.replace(/handler/g, 'worker') });
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 12; i++) {
+      files[`src/m${i}.ts`] = Array.from({ length: 80 }, (_, j) => `export function handler${i}x${j}(input: RequestPayload${j}): ResponsePayload${j} { return null as any; }`).join('\n');
+    }
+    const root = tmpRepo(files);
     await runIndex({ root, layer: 'local' });
-    const r = new Librarian(root).findRelevant('handler worker payload', { budget: 1500 });
+    const r = new Librarian(root).findRelevant('handler payload request response', { budget: 1500 });
     assert.ok(r.deliveredTokens <= 1700, `delivered ${r.deliveredTokens}`);
     assert.match(r.prompt, /Also relevant/);
   });
@@ -602,5 +610,187 @@ describe('saved notes (chat context memory)', () => {
     new Librarian(root).notes.save({ title: 'Invoice payments', summary: 'Use the ledger API for invoice payments.' });
     assert.doesNotMatch(new Librarian(root, 'onApiChange', false).findRelevant('pay invoice').prompt, /Saved context/);
     assert.match(new Librarian(root).findRelevant('pay invoice').prompt, /ledger API/);
+  });
+});
+
+describe('retrieval improvements', () => {
+  test('tests and code under test are paired in both directions', async () => {
+    const root = tmpRepo({
+      'src/billing/invoice.ts': `export function createInvoice(customerId: string): Invoice { return {} as Invoice; }`,
+      'src/billing/invoice.test.ts': `describe('invoice', () => { it('creates', () => {}); });`,
+      'src/other/invoice.test.ts': `describe('unrelated invoice', () => { it('x', () => {}); });`,
+      'app/payments.py': `def charge_card(amount):\n    return amount\n`,
+      'tests/test_payments.py': `def test_charge_card():\n    assert True\n`,
+    });
+    await runIndex({ root, layer: 'local' });
+    const lib = new Librarian(root);
+    const a = lib.findRelevant('createInvoice customerId', { maxFiles: 1 });
+    assert.ok(a.files.some((f) => f.path === 'src/billing/invoice.test.ts' && f.reasons[0].startsWith('tests ')), 'sibling test pulled in');
+    assert.ok(!a.files.some((f) => f.path === 'src/other/invoice.test.ts'), 'a same-named test in another folder is not paired');
+    const b = lib.findRelevant('test_charge_card', { maxFiles: 1 });
+    assert.ok(b.files.some((f) => f.path === 'app/payments.py' && f.reasons[0].startsWith('code under test')), 'test pulls in its source');
+    assert.equal(stemKey('tests/test_payments.py'), stemKey('app/payments.py'));
+    assert.ok(isTestPath('src/a.spec.tsx') && isTestPath('tests/unit_tests/x_test.py') && !isTestPath('src/billing/invoice.ts'));
+  });
+
+  test('skeleton caps keep whole lines and say what was left out', () => {
+    const text = Array.from({ length: 50 }, (_, i) => `def test_case_number_${i}(fixture_one, fixture_two): ...`).join('\n');
+    const capped = capSkeleton(text, 60);
+    assert.ok(capped.split('\n').length < 20 && /\+\d+ more lines/.test(capped));
+    assert.equal(capSkeleton('def a(): ...', 60), 'def a(): ...');
+  });
+
+  test('a long pack stays small because skeletons are capped', async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 40; i++) {
+      files[`src/mod${i}.ts`] = Array.from({ length: 60 }, (_, j) => `export function widget${i}_${j}(input: WidgetInput): WidgetOutput { return null as any; }`).join('\n');
+    }
+    const root = tmpRepo(files);
+    await runIndex({ root, layer: 'local' });
+    const r = new Librarian(root).findRelevant('widget input output');
+    assert.ok(r.files.length >= 30, `candidates ${r.files.length}`);
+    assert.ok(r.deliveredTokens < 6200, `delivered ${r.deliveredTokens}`);
+    assert.ok(!/Also relevant/.test(r.prompt) || r.deliveredTokens < 6200);
+  });
+
+  test('working context: branch words, modified files and diff words steer a vague task', async () => {
+    assert.equal(branchWords('feature/PYPAY-16119-delete-future-dated'), 'PYPAY 16119 delete future dated');
+    assert.equal(branchWords('main'), '');
+    const root = tmpRepo({
+      'src/deductions/recurring.ts': `export function listRecurring(): number { return 1; }`,
+      'src/payroll/run.ts': `export function startRun(): number { return 1; }`,
+      'src/ui/menu.ts': `export function openMenu(): number { return 1; }`,
+    });
+    execFileSync('git', ['init', '-q', '-b', 'feature/delete-recurring-deduction'], { cwd: root });
+    execFileSync('git', ['-c', 'user.email=a@b.c', '-c', 'user.name=t', 'add', '-A'], { cwd: root });
+    execFileSync('git', ['-c', 'user.email=a@b.c', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: root });
+    fs.appendFileSync(path.join(root, 'src/payroll/run.ts'), '\nexport function cancelScheduledRun(): number { return 2; }\n');
+    await runIndex({ root, layer: 'local' });
+    const lib = new Librarian(root);
+    const ctx = gitWorkContext(root);
+    assert.equal(ctx.branch, 'feature/delete-recurring-deduction');
+    assert.deepEqual(ctx.changedFiles, ['src/payroll/run.ts']);
+    assert.ok(ctx.diffWords!.includes('cancel'));
+
+    const plain = lib.findRelevant('fix the thing');
+    assert.ok(!plain.files.some((f) => f.path === 'src/payroll/run.ts'), 'no signal without context');
+    const withWork = lib.findRelevant('fix the thing', { work: true });
+    assert.ok(withWork.files.some((f) => f.path === 'src/deductions/recurring.ts'), 'branch words find the feature folder');
+    const run = withWork.files.find((f) => f.path === 'src/payroll/run.ts');
+    assert.ok(run && run.reasons.some((r) => r.includes('modified')), 'the file you are editing is included');
+  });
+});
+
+describe('benchmark harness', () => {
+  test('is deterministic, pins commits and reports which tasks got worse', async () => {
+    const root = tmpRepo({ 'src/a.ts': `export function alpha(): number { return 1; }`, 'src/b.ts': `export function beta(): number { return 1; }` });
+    const git = (...a: string[]) => execFileSync('git', ['-c', 'user.email=a@b.c', '-c', 'user.name=t', ...a], { cwd: root, encoding: 'utf8' });
+    git('init', '-q', '-b', 'main');
+    git('add', '-A');
+    git('commit', '-qm', 'init');
+    fs.appendFileSync(path.join(root, 'src/a.ts'), '\nexport function alphaTwo(): number { return 2; }\n');
+    git('commit', '-qam', 'add alphaTwo to alpha module');
+    fs.appendFileSync(path.join(root, 'src/b.ts'), '\nexport function betaTwo(): number { return 2; }\n');
+    git('commit', '-qam', 'add betaTwo to beta module');
+    await runIndex({ root, layer: 'local' });
+    const first = await estimateSavings(new Librarian(root), { commits: 10, includeSessions: false });
+    const refs = first.cases.map((c) => c.ref!);
+    assert.ok(refs.length >= 2);
+    const pinned = await estimateSavings(new Librarian(root), { refs, includeSessions: false });
+    const a = benchRun(first, 'a', root, {});
+    const b = benchRun(pinned, 'b', root, {});
+    assert.deepEqual(a.tasks, b.tasks, 'same commits, same numbers');
+    assert.equal(b.tasks.length, refs.length);
+    const strict = await estimateSavings(new Librarian(root), { refs, includeSessions: false, strict: true });
+    assert.ok(strict.cases.every((c) => c.found.length <= first.cases.find((x) => x.ref === c.ref)!.found.length));
+    const mk = (label: string, found: string[], missed: { path: string; reason: string }[]): BenchRun => ({
+      ...a,
+      label,
+      tasks: [{ ...a.tasks[0], ref: 'r1', foundFiles: found, missedFiles: missed }],
+    });
+    const before = mk('before', ['x.ts'], [{ path: 'y.ts', reason: 'wording-mismatch' }, { path: 'z.ts', reason: 'wording-mismatch' }, { path: 'w.ts', reason: 'empty-skeleton' }]);
+    const after = mk('after', ['y.ts', 'w.ts'], [{ path: 'z.ts', reason: 'wording-mismatch' }]);
+    const rec = recoveredByReason(before, after);
+    assert.match(rec, /task shares no words with the file \| 2 \| 1 \| 50%/);
+    assert.match(rec, /no public names \(path only\) \| 1 \| 1 \| 100%/);
+    assert.match(rec, /no longer finds: 1 of 1/);
+    const worse = { ...b, label: 'worse', tasks: b.tasks.map((t) => ({ ...t, saved: t.saved - 5000 })) };
+    const table = compareRuns([a, worse]);
+    assert.match(table, /\| Metric \| a \| worse \|/);
+    assert.match(table, /worse vs a: 0 tasks better, \d+ worse/);
+  });
+});
+
+describe('files with no public names', () => {
+  test('private-only modules and scripts get a searchable skeleton; specs stay light', () => {
+    const py = analyzeSource('app/_helpers.py', '\"\"\"Helpers.\"\"\"\nimport os\nfrom app.core import models\ndef _round_cents(a):\n    return a\nclass _Hidden:\n    pass\n');
+    assert.ok(py.skeleton.includes('(private) def _round_cents(a)') && py.skeleton.includes('# uses: os, core, models'));
+    assert.deepEqual(py.exportNames, []);
+    const script = analyzeSource('scripts/backfill.ts', "import fs from 'fs';\nimport { runJob } from './util';\nfunction backfillRates(){}\nbackfillRates();\n");
+    assert.ok(script.skeleton.includes('(private) function backfillRates()') && /uses: .*runJob/.test(script.skeleton));
+    const spec = analyzeSource('src/a.spec.ts', "import { A } from './a';\ndescribe('A', () => { it('does the thing', () => {}); });");
+    assert.ok(!spec.skeleton.includes('does the thing'), 'test titles are off by default (measured: they lower the saving)');
+    assert.ok(spec.skeleton.includes('uses: A'));
+    const exported = analyzeSource('src/b.ts', 'export function pub(): void {}\nfunction hidden(): void {}');
+    assert.ok(!exported.skeleton.includes('private'), 'files with a public surface are unchanged');
+  });
+});
+
+describe('config, schema, template and style files', () => {
+  test('each type gets a searchable skeleton', () => {
+    const y = analyzeSource('deploy/app.yaml', 'name: app\nspec:\n  replicas: 2\n  strategy:\n    type: Rolling\nservices:\n  - name: api\n');
+    assert.ok(y.exportNames.includes('replicas') && /spec: \{/.test(y.skeleton));
+    const j = analyzeSource('package.json', JSON.stringify({ name: 'x', scripts: { build: 'tsc', lint: 'eslint' }, dependencies: { zod: '1' } }));
+    assert.ok(/scripts: \{ build, lint \}/.test(j.skeleton) && j.exportNames.includes('zod'));
+    const p = analyzeSource('api/pay.proto', 'syntax = "proto3";\npackage pay.v1;\nimport "common/money.proto";\nmessage Charge { int32 id = 1; }\nservice Payments { rpc CreateCharge (Charge) returns (Receipt); }');
+    assert.ok(p.skeleton.includes('rpc CreateCharge(Charge) -> Receipt') && p.importSpecifiers.includes('./common/money.proto'));
+    const g = analyzeSource('schema.graphql', 'type Invoice {\n  id: ID!\n  total: Float\n}\nquery Invoices { all }');
+    assert.ok(g.skeleton.includes('type Invoice { id, total }'));
+    const h = analyzeSource('src/deduction.component.html', '<app-grid></app-grid><button id="delete-btn" (click)="onDelete($event)">Delete deduction</button><input formControlName="amount">');
+    assert.ok(h.exportNames.includes('onDelete') && h.exportNames.includes('app-grid') && /Delete deduction/.test(h.skeleton));
+    const sc = analyzeSource('src/x.scss', "@use './vars';\n$gap: 4px;\n.card-header { color: red; }\n@mixin pad { padding: 1px; }");
+    assert.ok(sc.exportNames.includes('card-header') && sc.exportNames.includes('pad') && sc.importSpecifiers.includes('./vars'));
+    const stub = analyzeSource('lib/util.pyi', 'def parse(text: str) -> int: ...\nclass Reader: ...\n');
+    assert.ok(stub.exportNames.includes('parse') && stub.exportNames.includes('Reader'));
+  });
+
+  test('Angular components link to their template and styles', () => {
+    const ts = analyzeSource('src/a/a.component.ts', "@Component({ selector: 'app-a', templateUrl: './a.component.html', styleUrls: ['./a.component.scss'] })\nexport class AComponent {}");
+    assert.ok(ts.importSpecifiers.includes('./a.component.html') && ts.importSpecifiers.includes('./a.component.scss'));
+    const known = new Set(['src/a/a.component.html']);
+    assert.equal(resolveImport('src/a/a.component.ts', './a.component.html', known), 'src/a/a.component.html');
+  });
+
+  test('defaults: JSON is opt-in, code is never filtered as noise, locks and fixtures are', () => {
+    assert.ok(!DEFAULT_DATA_EXT.includes('json' as never) && DEFAULT_DATA_EXT.includes('html'));
+    assert.ok(isSourcePath('src/a/a.component.html') && isSourcePath('deploy/app.yaml') && !isSourcePath('package.json'));
+    assert.ok(!isSourcePath('pnpm-lock.yaml') && !isSourcePath('src/locales/en.yaml') && !isSourcePath('tests/fixtures/data.yaml'));
+    assert.ok(isSourcePath('tests/fixtures/helper.ts') && isSourcePath('src/__mocks__/api.ts'), 'code files are not filtered');
+    assert.ok(isNoisyDataPath('x/__snapshots__/a.yaml') && !isNoisyDataPath('x/__snapshots__/a.ts'));
+    const old = process.env.LIBRARIAN_TYPES;
+    process.env.LIBRARIAN_TYPES = 'json,html';
+    assert.deepEqual(enabledDataExt(), ['json', 'html']);
+    assert.ok(isSourcePath('package.json') && !isSourcePath('deploy/app.yaml'));
+    process.env.LIBRARIAN_TYPES = '';
+    assert.ok(!isSourcePath('a.html') && isSourcePath('a.ts'));
+    old === undefined ? delete process.env.LIBRARIAN_TYPES : (process.env.LIBRARIAN_TYPES = old);
+  });
+  test('tsconfig paths, baseUrl and workspace packages resolve to files', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lib-alias-'));
+    const w = (f: string, c: string) => {
+      fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      fs.writeFileSync(path.join(dir, f), c);
+    };
+    w('tsconfig.json', '{ // comment\n "compilerOptions": { "baseUrl": ".", "paths": { "@app/*": ["src/app/*"], "@core": ["packages/core/src"], }, } }');
+    w('packages/core/package.json', '{"name":"@acme/core"}');
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    const known = new Set(['src/app/x/y.ts', 'packages/core/src/index.ts', 'packages/core/src/util.ts', 'src/lib/z.ts']);
+    const r = buildAliasResolver(dir);
+    assert.equal(r.resolve('src/a.ts', '@app/x/y', known), 'src/app/x/y.ts');
+    assert.equal(r.resolve('src/a.ts', '@core', known), 'packages/core/src/index.ts');
+    assert.equal(r.resolve('src/a.ts', 'src/lib/z', known), 'src/lib/z.ts', 'baseUrl');
+    assert.equal(r.resolve('src/a.ts', '@acme/core/util', known), 'packages/core/src/util.ts', 'workspace package');
+    assert.equal(r.resolve('src/a.ts', 'lodash', known), undefined);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

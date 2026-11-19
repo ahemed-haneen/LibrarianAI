@@ -7,8 +7,16 @@
   - the default answer → the **Librarian** custom agent (`.github/agents/librarian.agent.md`), which calls `#librarianFind` first;
   - `/context`, `/related`, `/status`, `/save`, `/notes` → skills `/librarian-context`, `/librarian-related`, `/librarian-status`, `/librarian-save`, `/librarian-notes` (`.github/skills/`).
 - **Install Copilot Instructions** (and `librarian install-instructions`) now also writes the agent and skills. Files you edited yourself (marker removed) are never overwritten.
-- **The sidebar's single "AI Readiness %" is now two rows:** **Skeletons %** (free index, fresh vs stale) and **AI summaries %** (summarised vs outdated). The old row reached 100% with zero AI summaries, which read as "fully AI-ready". Clicking the summaries row indexes with your chosen model, or opens Setup if none is chosen.
+- **The sidebar's single "AI Readiness %" is now two rows:** **Skeletons %** (free index, fresh vs stale) and **AI summaries %** (summarised vs outdated). The old row reached 100% with zero AI summaries, which read as "fully AI-ready". The summaries row is informational (it opens Setup only when no model is chosen); summarising is started from Index Workspace or the right-click menu, after a confirmation.
+- **The sidebar's inline ⚡ and ↻ buttons are now free (skeleton only).** They used to call the model, which could trigger Copilot's access prompt just from clicking near a folder. AI summaries for a file or folder are now **Summarise with AI** in the right-click menu. Clicking the sidebar's **AI summaries** row no longer starts a run, and every command that calls a model (Index Workspace, Refresh Stale, Summarise with AI) asks for confirmation first.
 - The Librarian agent now offers once, when a substantial task is finished, to save it to Librarian memory (`#librarianSave`).
+
+### Retrieval and benchmark
+- **Better ranking.** Per-language search statistics, test/spec files paired with their source, capped skeletons so more candidates fit the pack, a second-stage rerank by query-word coverage, more candidates (32) and import neighbours (8). On the proxy repo: saved tokens 29% → 59%, median task 6% → 56%.
+- **More indexed types.** YAML, proto, GraphQL, HTML, SCSS and `.pyi` (setting `trishAI.extraFileTypes`; JSON is opt-in). Files with no public names get a private-symbol/imports skeleton.
+- **Import graph resolves tsconfig `paths`, `baseUrl` and workspace package names**, and Angular `templateUrl`/`styleUrls`. Run **Index Workspace** (or `librarian index --force`) once to rebuild edges.
+- **Working context.** `#librarianFind` also uses branch name, open and modified files and diff words.
+- **`librarian bench` / `bench-compare`** and `templates/librarian-bench.yml` replay past commits; see `docs/BENCHMARK.md`.
 
 ### Added
 - **Savings report explains itself.** **Estimate Token Savings** now says why tokens were not saved: the saving with perfect retrieval versus the actual one (so you can tell fixable retrieval misses from structural limits), each task's main cause, every missed file with its reason (ranked below the pack limit, neighbour limit, no public names, too few searchable words, no shared wording), the files missed most often, which commits were left out and why (with the file types involved), and a numbered list of suggestions. A JSON copy of the diagnostics ends the report, so it can be pasted into a chat or issue.

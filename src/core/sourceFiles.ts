@@ -1,21 +1,33 @@
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
+import { dataFence, enabledDataExt, isNoisyDataPath } from './dataFiles';
 import * as path from 'path';
 import { toPosix } from './util';
 
 /** Directory that holds every Librarian artefact, relative to the workspace root. */
 export const INDEX_DIR = '.trishAI';
 
-export const SOURCE_EXT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|py)$/;
+const CODE_EXT = ['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'py'];
+
+let extCache: { key: string; re: RegExp } | undefined;
+
+/** Code plus the config / schema / template / style types from dataFiles.ts (see `trishAI.extraFileTypes`). */
+export function sourceExt(): RegExp {
+  const key = enabledDataExt().join('|');
+  if (extCache?.key !== key) {
+    extCache = { key, re: new RegExp(`\\.(${[...CODE_EXT, ...enabledDataExt()].join('|')})$`) };
+  }
+  return extCache.re;
+}
 
 /** Code-fence language for a file's skeleton. */
-export function fenceLang(rel: string): 'python' | 'typescript' {
-  return rel.endsWith('.py') ? 'python' : 'typescript';
+export function fenceLang(rel: string): string {
+  return /\.pyi?$/.test(rel) ? 'python' : /\.(tsx?|[mc]?[jt]sx?)$/.test(rel) ? 'typescript' : dataFence(rel);
 }
 
 /** Placeholder shown when a file has no public surface. */
 export function noExports(rel: string): string {
-  return rel.endsWith('.py') ? '# (no public names)' : '// (no exports)';
+  return /\.pyi?$/.test(rel) ? '# (no public names)' : /\.(tsx?|[mc]?[jt]sx?)$/.test(rel) ? '// (no exports)' : '# (nothing indexed)';
 }
 
 const IGNORED_DIRS = new Set([
@@ -25,7 +37,7 @@ const IGNORED_DIRS = new Set([
 
 /** Single source of truth for "is this a file Librarian indexes?" — used by the tree, generators, CLI and CI. */
 export function isSourcePath(rel: string): boolean {
-  if (!SOURCE_EXT.test(rel) || /\.d\.[mc]?ts$/.test(rel) || /\.min\.js$/.test(rel) || /_pb2(_grpc)?\.py$/.test(rel)) {
+  if (!sourceExt().test(rel) || isNoisyDataPath(rel) || /\.d\.[mc]?ts$/.test(rel) || /\.min\.js$/.test(rel) || /_pb2(_grpc)?\.py$/.test(rel)) {
     return false;
   }
   const parts = rel.split('/');

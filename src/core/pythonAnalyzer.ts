@@ -505,6 +505,7 @@ export function analyzePython(content: string, fileName = ''): SourceAnalysis {
   }
 
   let decorators: string[] = [];
+  const privateLines: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (l.indent !== 0) {
@@ -536,11 +537,16 @@ export function analyzePython(content: string, fileName = ''): SourceAnalysis {
           `${def.async ? 'async ' : ''}def ${def.name}(${renderParams(def.params, false)})${def.returns ? ` -> ${def.returns}` : ''}: ...${doc ? `  # ${doc}` : ''}`
         );
         exportNames.add(def.name);
+      } else if (!KEPT_DUNDERS.has(def.name)) {
+        privateLines.push(`def ${def.name}(${renderParams(def.params, false)})`);
       }
       continue;
     }
     const cls = parseClass(l.text);
     if (cls) {
+      if (!isPublic(cls.name)) {
+        privateLines.push(`class ${cls.name}`);
+      }
       if (isPublic(cls.name)) {
         const doc = docAfter(lines, i);
         skeleton.push(
@@ -571,6 +577,12 @@ export function analyzePython(content: string, fileName = ''): SourceAnalysis {
 
   // Names listed in __all__ are public too (they may be re-exported from elsewhere).
   declared?.forEach((nm) => exportNames.add(nm));
+  if (exportNames.size === 0) {
+    // No public names (private-only module, script): list what it defines privately and what it uses.
+    skeleton.push(...privateLines.slice(0, 20).map((p) => `# (private) ${p}`));
+    const used = [...imports].map((i) => i.replace(/^py:/, '').split('.').pop()!).filter(Boolean);
+    used.length && skeleton.push(`# uses: ${[...new Set(used)].slice(0, 20).join(', ')}`);
+  }
   return { skeleton: skeleton.join('\n'), exportNames: [...exportNames], importSpecifiers: [...imports] };
 }
 

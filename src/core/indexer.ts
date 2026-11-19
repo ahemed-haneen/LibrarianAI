@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { buildAliasResolver } from './aliases';
 import { analyzeSource, resolveImport } from './analyzer';
 import { ContextPolicy, FileRecord, IndexView, LayerName } from './indexStore';
 import { contextPrompt, LlmClient } from './llm';
@@ -74,6 +75,10 @@ export async function runIndex(opts: IndexOptions): Promise<IndexResult> {
     }
   }
 
+  // tsconfig paths / workspace package names, so imports like '@app/x' or 'src/x' become graph edges.
+  const aliases = buildAliasResolver(opts.root);
+  const resolveSpec = (rel: string, s: string): string | undefined => resolveImport(rel, s, known) ?? aliases.resolve(rel, s, known);
+
   // Phase 1 — skeletons + imports (free, synchronous, fast).
   const needContext: { rel: string; source: string; rec: FileRecord }[] = [];
   for (const rel of files) {
@@ -104,7 +109,7 @@ export async function runIndex(opts: IndexOptions): Promise<IndexResult> {
           skeletonHash,
           skeletonAt: new Date().toISOString(),
           exportNames: a.exportNames,
-          imports: [...new Set(a.importSpecifiers.map((s) => resolveImport(rel, s, known)).filter((x): x is string => !!x))],
+          imports: [...new Set(a.importSpecifiers.map((s) => resolveSpec(rel, s)).filter((x): x is string => !!x))],
           sourceTokens: estimateTokens(source),
           skeletonTokens: estimateTokens(a.skeleton),
           context: prev?.context,

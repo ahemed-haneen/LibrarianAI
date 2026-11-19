@@ -114,14 +114,15 @@ export class CoverageTreeProvider implements vscode.TreeDataProvider<CoverageNod
     summaries.tooltip =
       'Short "what it does / use when" summaries written by the AI model you chose. They make file matching better but cost model requests, ' +
       'so they only run when you ask. ' +
-      (modelChosen ? 'Click to summarise the files that need it (only changed files cost anything).' : 'Click to choose a provider and model first.');
+      (modelChosen ? 'Clicking this row does nothing. To summarise, use Index Workspace in the title bar or right-click a file/folder.' : 'Click to choose a provider and model first.');
     summaries.iconPath = new vscode.ThemeIcon(
       'sparkle',
       new vscode.ThemeColor(summaryPct > 75 ? 'charts.green' : summaryPct > 0 ? 'charts.yellow' : 'disabledForeground')
     );
-    summaries.command = modelChosen
-      ? { command: 'trishAI.indexWorkspace', title: 'Index workspace' }
-      : { command: 'trishAI.openSetup', title: 'Choose model' };
+    if (!modelChosen) {
+      // Only ever opens Setup. Selecting this row must never start a model run.
+      summaries.command = { command: 'trishAI.openSetup', title: 'Choose model' };
+    }
 
     const s = this.lib()!.view.layers.local.stats();
     const saved = Math.max(0, s.estTokensIfFullFiles - s.estTokensDelivered);

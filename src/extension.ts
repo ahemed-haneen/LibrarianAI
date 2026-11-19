@@ -73,7 +73,23 @@ export function activate(context: vscode.ExtensionContext) {
   const layer = () => cfg().get<LayerName>('writeLayer', 'local');
   const budget = () => cfg().get<number>('promptTokenBudget', 6000);
 
-  let librarian: Librarian | undefined = root ? new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true)) : undefined;
+  const applyFileTypes = () => {
+    process.env.LIBRARIAN_TYPES = cfg().get<string[]>('extraFileTypes', ['yaml', 'yml', 'proto', 'graphql', 'gql', 'html', 'scss', 'pyi']).join(',');
+  };
+  applyFileTypes();
+  const newLibrarian = (r: string): Librarian => {
+    const l = new Librarian(r, policy(), cfg().get<boolean>('notes.enabled', true));
+    // Files open in editor tabs are a hint about what the task is about.
+    l.openFiles = () =>
+      vscode.window.tabGroups.all
+        .flatMap((g) => g.tabs)
+        .map((t) => (t.input instanceof vscode.TabInputText ? t.input.uri : undefined))
+        .filter((u): u is vscode.Uri => !!u && u.scheme === 'file')
+        .map((u) => relPosix(r, u.fsPath))
+        .filter((p) => !p.startsWith('..'));
+    return l;
+  };
+  let librarian: Librarian | undefined = root ? newLibrarian(root) : undefined;
   const lib = () => librarian;
   const tracker = root && librarian ? new TaskTracker(root, librarian.memory, () => cfg().get<boolean>('learning.enabled', true)) : undefined;
 
@@ -129,7 +145,7 @@ export function activate(context: vscode.ExtensionContext) {
         });
       }
     );
-    librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
+    librarian = newLibrarian(root);
     refreshTree();
     if (opts.silent && !result.errors.length) {
       return;
@@ -171,16 +187,44 @@ export function activate(context: vscode.ExtensionContext) {
     return listSourceFiles(root).filter((f) => f.startsWith(rel + '/'));
   };
 
+  /** Every command that can call the model asks first, so nothing summarises by accident. */
+  const confirmAi = async (what: string): Promise<boolean> => {
+    if (cfg().get<string>('aiProvider', 'copilot') === 'none') {
+      return true; // nothing will be sent anywhere; only skeletons get built
+    }
+    const pick = await vscode.window.showWarningMessage(
+      `Summarise ${what} with AI?`,
+      { modal: true, detail: 'This sends source files to your chosen model and uses model requests. Only files whose API changed are sent.' },
+      'Summarise'
+    );
+    return pick === 'Summarise';
+  };
+
   context.subscriptions.push(
+    // Inline sidebar buttons are free: skeletons only, never a model request.
     vscode.commands.registerCommand('trishAI.generateSkeleton', (node?: CoverageNode) =>
-      index({ files: filesFor(node), title: `indexing ${node?.label ?? 'current file'}` })
+      index({ files: filesFor(node), title: `indexing ${node?.label ?? 'current file'} (no AI)`, withAi: false })
     ),
     vscode.commands.registerCommand('trishAI.updateSkeleton', (node?: CoverageNode) =>
-      index({ files: filesFor(node), force: true, title: `re-indexing ${node?.label ?? 'current file'}` })
+      index({ files: filesFor(node), force: true, title: `re-indexing ${node?.label ?? 'current file'} (no AI)`, withAi: false })
     ),
-    vscode.commands.registerCommand('trishAI.indexWorkspace', () => index({ title: 'indexing workspace (only changed files cost anything)' })),
+    // AI summaries only on an explicit command (right-click menu, not an inline button).
+    vscode.commands.registerCommand('trishAI.summariseWithAi', async (node?: CoverageNode) => {
+      if (await confirmAi(node?.label ? `“${node.label}”` : 'the current file')) {
+        await index({ files: filesFor(node), title: `summarising ${node?.label ?? 'current file'} with AI` });
+      }
+    }),
+    vscode.commands.registerCommand('trishAI.indexWorkspace', async () => {
+      if (await confirmAi('the workspace')) {
+        await index({ title: 'indexing workspace (only changed files cost anything)' });
+      }
+    }),
     vscode.commands.registerCommand('trishAI.indexSkeletonsOnly', () => index({ title: 'building skeletons (no AI)', withAi: false })),
-    vscode.commands.registerCommand('trishAI.refreshStale', () => index({ title: 'refreshing stale entries' })),
+    vscode.commands.registerCommand('trishAI.refreshStale', async () => {
+      if (await confirmAi('stale files')) {
+        await index({ title: 'refreshing stale entries' });
+      }
+    }),
     vscode.commands.registerCommand('trishAICoverageView.refresh', refreshTree),
 
     vscode.commands.registerCommand('trishAI.askLibrarian', () => {
@@ -231,7 +275,7 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (err) {
         vscode.window.showErrorMessage(`Could not read git history: ${err instanceof Error ? err.message.split('\n')[0] : String(err)}`);
       }
-      librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
+      librarian = newLibrarian(root);
     }),
 
     vscode.commands.registerCommand('trishAI.showStatus', () => {
@@ -362,7 +406,7 @@ export function activate(context: vscode.ExtensionContext) {
         { location: vscode.ProgressLocation.Notification, title: 'Librarian: estimating token savings from your history…' },
         async () => {
           await runIndex({ root, layer: layer(), policy: policy() }); // free: makes sure skeletons are current
-          librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
+          librarian = newLibrarian(root);
           // Use the chosen model's own tokenizer when there is one (counting does not send a chat request).
           let count: ((t: string) => Promise<number>) | undefined;
           let tokenizerLabel: string | undefined;
@@ -418,8 +462,11 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     { dispose: () => clearTimeout(timer) },
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('trishAI.extraFileTypes')) {
+        applyFileTypes();
+      }
       if (root && e.affectsConfiguration('trishAI')) {
-        librarian = new Librarian(root, policy(), cfg().get<boolean>('notes.enabled', true));
+        librarian = newLibrarian(root);
         refreshTree();
       }
     })

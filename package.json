@@ -47,12 +47,17 @@
       },
       {
         "command": "trishAI.generateSkeleton",
-        "title": "Librarian: Index (skeleton + summary)",
+        "title": "Librarian: Index Skeleton (free, no AI)",
         "icon": "$(zap)"
       },
       {
+        "command": "trishAI.summariseWithAi",
+        "title": "Librarian: Summarise with AI (uses your chosen model)",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "trishAI.updateSkeleton",
-        "title": "Librarian: Force Re-index",
+        "title": "Librarian: Force Re-index (free, no AI)",
         "icon": "$(refresh)"
       },
       {
@@ -167,6 +172,12 @@
           "default": true,
           "description": "Build/refresh skeletons for the whole workspace in the background on startup (free, no AI)."
         },
+        "trishAI.extraFileTypes": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["yaml", "yml", "json", "proto", "graphql", "gql", "html", "scss", "pyi"] },
+          "default": ["yaml", "yml", "proto", "graphql", "gql", "html", "scss", "pyi"],
+          "markdownDescription": "Config, schema, template and style files indexed besides code (keys, messages, handlers, selectors). They rank below code of equal match. `json` is off by default: it adds many files for few useful hits. Run **Librarian: Index Workspace** after changing this."
+        },
         "trishAI.promptTokenBudget": {
           "type": "number",
           "default": 6000,
@@ -232,6 +243,11 @@
           "command": "trishAI.generateSkeleton",
           "when": "view == trishAICoverageView && viewItem == codeFolder",
           "group": "inline"
+        },
+        {
+          "command": "trishAI.summariseWithAi",
+          "when": "view == trishAICoverageView && (viewItem == codeFolder || viewItem == codeFile || viewItem == codeFileIndexed)",
+          "group": "navigation@9"
         }
       ],
       "view/title": [

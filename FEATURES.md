@@ -243,7 +243,8 @@ what your firm's plan actually meters.
 | Librarian: Index Workspace | Incremental index of everything (only changed files cost anything) |
 | Librarian: Build Skeletons Only (no AI) | Free full pass |
 | Librarian: Refresh Stale Entries | Re-index files that changed since indexing |
-| Librarian: Index (skeleton + summary) / Force Re-index | Per file or folder from the sidebar |
+| Librarian: Index Skeleton / Force Re-index | Per file or folder from the sidebar's inline buttons. Free, never calls a model |
+| Librarian: Summarise with AI | Right-click a file or folder in the sidebar. The only per-file command that calls your chosen model |
 | Librarian: Build Context Pack | Panel: describe a task, get a pack on the clipboard |
 | Librarian: Install Copilot Instructions | Adds the "use the index first" block |
 | Librarian: Learn from Recent Commits | Seeds task memory from git history |
