@@ -35,6 +35,7 @@ export const TOOL_DEFS: ToolDef[] = [
       const r = lib.findRelevant(String(input.task ?? ''), {
         budget: typeof input.maxTokens === 'number' ? input.maxTokens : undefined,
         remember: true,
+        work: true,
       });
       return { text: r.prompt, taskId: r.taskId };
     },

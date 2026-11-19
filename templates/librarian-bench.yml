@@ -1,0 +1,108 @@
+# Librarian — benchmark: what do AI summaries add on THIS repository?
+#
+# Copy to .github/workflows/librarian-bench.yml and run it by hand (Actions -> Librarian benchmark -> Run workflow).
+# It replays the same past commits twice and compares them:
+#
+#   1. skeletons only (free)         -> bench-skeletons.json
+#   2. + AI summaries (CI provider)  -> bench-summaries.json
+#
+# The job summary then shows the comparison table, including, for the files the skeleton-only run missed
+# "because the task shares no words with the file" or "because the file has no public names", how many are
+# found once summaries exist. Those are the two miss types where summaries are expected to help.
+#
+# Cost: run 2 summarises every indexed file once, into the job's own local layer (the same size of pass as the
+# first full run of librarian-index.yml). Nothing is committed or pushed by this workflow, so it is safe to try
+# before the organisation-wide run. Developers keep the provider set to `none`.
+
+name: Librarian benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      commits:
+        description: 'Recent commits to replay (the first run pins exactly these for both)'
+        default: '50'
+      provider:
+        description: 'Summary provider: github-models | openai | anthropic'
+        default: 'github-models'
+      model:
+        description: 'Summary model'
+        default: 'openai/gpt-4.1-mini'
+      temporal:
+        description: 'Strict time order: a task may only learn from commits older than it'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  models: read
+
+env:
+  LIBRARIAN_REPO: ahemed-haneen/LibrarianAI
+  LIBRARIAN_REF: main
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out Librarian
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.LIBRARIAN_REPO }}
+          ref: ${{ env.LIBRARIAN_REF }}
+          path: .librarian-tool
+          token: ${{ secrets.LIBRARIAN_TOOL_TOKEN || github.token }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build Librarian CLI
+        working-directory: .librarian-tool
+        run: pnpm install --frozen-lockfile && node esbuild.js --production
+
+      - name: Run 1 - skeletons only (free)
+        run: |
+          CLI="node .librarian-tool/dist/cli.js"
+          T=""; [ "${{ inputs.temporal }}" = "true" ] && T="--temporal"
+          # Set any committed shared index (which may hold summaries) aside so this run is skeletons only.
+          [ -d .trishAI/shared ] && mv .trishAI/shared .trishAI/shared.off
+          $CLI index --layer local --force
+          $CLI learn --layer local --range ${{ inputs.commits }} || true
+          $CLI bench --commits ${{ inputs.commits }} $T --label skeletons \
+            --write-pin pin.json --out bench-skeletons.json | tee bench-skeletons.md
+
+      - name: Run 2 - with AI summaries
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          LIBRARIAN_API_KEY: ${{ secrets.LIBRARIAN_API_KEY }}
+          LIBRARIAN_BASE_URL: ${{ vars.LIBRARIAN_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          CLI="node .librarian-tool/dist/cli.js"
+          T=""; [ "${{ inputs.temporal }}" = "true" ] && T="--temporal"
+          # Restore the committed shared index, if any: its summaries are reused, only missing ones are generated.
+          [ -d .trishAI/shared.off ] && mv .trishAI/shared.off .trishAI/shared
+          $CLI index --layer local --provider "${{ inputs.provider }}" --model "${{ inputs.model }}" --concurrency 3
+          $CLI bench --pin pin.json $T --label summaries --out bench-summaries.json | tee bench-summaries.md
+
+      - name: Compare
+        run: |
+          node .librarian-tool/dist/cli.js bench-compare bench-skeletons.json bench-summaries.json | tee compare.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: librarian-bench
+          path: |
+            pin.json
+            bench-*.json
+            bench-*.md
+            compare.md

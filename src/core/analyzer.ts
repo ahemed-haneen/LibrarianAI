@@ -1,4 +1,5 @@
 import * as ts from 'typescript';
+import { analyzeData } from './dataFiles';
 import { analyzePython, resolvePythonImport } from './pythonAnalyzer';
 
 export interface SourceAnalysis {
@@ -144,9 +145,39 @@ function describeInitializer(init: ts.Expression | undefined, sf: ts.SourceFile)
   return undefined;
 }
 
+/** Angular components point at their template and styles by path: treat those as imports so the graph links them. */
+function angularAssets(content: string): string[] {
+  if (!content.includes('@Component')) {
+    return [];
+  }
+  const rel = (p: string) => (p.startsWith('.') ? p : `./${p}`);
+  const out: string[] = [];
+  for (const m of content.matchAll(/templateUrl\s*:\s*['"`]([^'"`]+)['"`]/g)) {
+    out.push(rel(m[1]));
+  }
+  for (const m of content.matchAll(/styleUrls?\s*:\s*(\[[^\]]*\]|['"`][^'"`]+['"`])/g)) {
+    for (const f of m[1].matchAll(/['"`]([^'"`]+)['"`]/g)) {
+      out.push(rel(f[1]));
+    }
+  }
+  return out;
+}
+
 export function analyzeSource(fileName: string, content: string): SourceAnalysis {
-  if (/\.py$/.test(fileName)) {
+  const a = analyzeSourceInner(fileName, content);
+  const assets = /\.[mc]?tsx?$/.test(fileName) ? angularAssets(content) : [];
+  return assets.length ? { ...a, importSpecifiers: [...new Set([...a.importSpecifiers, ...assets])] } : a;
+}
+
+function analyzeSourceInner(fileName: string, content: string): SourceAnalysis {
+  if (/\.pyi?$/.test(fileName)) {
     return analyzePython(content, fileName);
+  }
+  if (!/\.[mc]?[jt]sx?$/.test(fileName)) {
+    const data = analyzeData(content, fileName);
+    if (data) {
+      return data;
+    }
   }
   const sf = ts.createSourceFile(fileName, content, ts.ScriptTarget.Latest, true, scriptKind(fileName));
   const lines: string[] = [];
@@ -282,11 +313,74 @@ export function analyzeSource(fileName: string, content: string): SourceAnalysis
   };
   visit(sf);
 
+  if (lines.length === 0) {
+    lines.push(...fallbackSkeleton(sf, content, importSpecifiers));
+  }
   return {
     skeleton: lines.join('\n'),
     exportNames: [...exportNames].filter(Boolean),
     importSpecifiers: [...importSpecifiers],
   };
+}
+
+/**
+ * For a file with no public surface (a spec, a script, a private-only module): what it tests, what it
+ * defines privately and what it uses, so more than its path is searchable. Only used when there are no exports.
+ */
+/**
+ * Measured on the replay benchmark: private names and imports raise recall (+2 points) at no cost to savings.
+ * Test titles raise recall more (+6 points) but lower the saving and the median (they pull in specs ahead of the
+ * large source files that matter), and specs are already reached through test pairing, so titles are off.
+ */
+export const FALLBACK_TITLES = 0;
+const FALLBACK_PRIVATE = 20;
+const FALLBACK_USES = 20;
+function fallbackSkeleton(sf: ts.SourceFile, content: string, imports: Set<string>): string[] {
+  const out: string[] = [];
+  const titles: string[] = [];
+  const re = /\b(describe|context|suite|it|test)(?:\.\w+)*\(\s*(['"`])((?:(?!\2).){3,100})\2/g;
+  for (const m of FALLBACK_TITLES > 0 ? content.matchAll(re) : []) {
+    titles.push(`${/^(it|test)$/.test(m[1]) ? 'it' : 'describe'}: ${m[3].trim()}`);
+    if (titles.length >= FALLBACK_TITLES) {
+      break;
+    }
+  }
+  out.push(...titles);
+  const privates: string[] = [];
+  for (const node of sf.statements) {
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      privates.push(`function ${node.name.text}(${params(node.parameters, sf)})`);
+    } else if (ts.isClassDeclaration(node) && node.name) {
+      privates.push(`class ${node.name.text}`);
+    } else if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isEnumDeclaration(node)) {
+      privates.push(`${ts.isEnumDeclaration(node) ? 'enum' : ts.isInterfaceDeclaration(node) ? 'interface' : 'type'} ${node.name.text}`);
+    } else if (ts.isVariableStatement(node)) {
+      for (const d of node.declarationList.declarations) {
+        if (ts.isIdentifier(d.name) && d.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer) || ts.isClassExpression(d.initializer))) {
+          privates.push(`function ${d.name.text}`);
+        }
+      }
+    }
+  }
+  if (privates.length) {
+    out.push(...privates.slice(0, FALLBACK_PRIVATE).map((p) => `(private) ${p}`));
+  }
+  const used: string[] = [];
+  for (const node of sf.statements) {
+    if (ts.isImportDeclaration(node) && node.importClause) {
+      const c = node.importClause;
+      c.name && used.push(c.name.text);
+      if (c.namedBindings && ts.isNamedImports(c.namedBindings)) {
+        c.namedBindings.elements.forEach((e) => used.push(e.name.text));
+      }
+    }
+  }
+  const modules = [...imports].filter((i) => i.startsWith('.')).map((i) => i.split('/').pop()!.replace(/\.[a-z]+$/, ''));
+  const uses = [...new Set([...used, ...modules.filter((m) => !used.some((u) => u.toLowerCase() === m.toLowerCase()))])].slice(0, FALLBACK_USES);
+  if (uses.length) {
+    out.push(`// uses: ${uses.join(', ')}`);
+  }
+  return out;
 }
 
 const RESOLVE_EXT = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
@@ -304,7 +398,11 @@ export function resolveImport(fromRel: string, spec: string, known: Set<string>)
     return undefined;
   }
   const baseDir = fromRel.includes('/') ? fromRel.slice(0, fromRel.lastIndexOf('/')) : '';
-  const joined = normalizePosix(baseDir ? `${baseDir}/${spec}` : spec);
+  return resolveBase(normalizePosix(baseDir ? `${baseDir}/${spec}` : spec), known);
+}
+
+/** A path without (or with) an extension, or a folder with an index file -> the known source file it means. */
+export function resolveBase(joined: string, known: Set<string>): string | undefined {
   const stripped = joined.replace(/\.(m|c)?jsx?$/, '');
   const candidates = [
     joined,

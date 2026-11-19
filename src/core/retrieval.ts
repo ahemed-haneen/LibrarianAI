@@ -1,10 +1,36 @@
 import * as fs from 'fs';
+import { DATA_SCORE_FACTOR } from './dataFiles';
 import { IndexView, ResolvedEntry } from './indexStore';
 import { NoteHit, NoteStore } from './notes';
 import { stripFence } from './indexer';
 import { fenceLang, noExports } from './sourceFiles';
 import { TaskMemory, TaskRecord } from './taskMemory';
+import { branchWords, WorkContext } from './workContext';
 import { absFromRel, estimateTokens, hashText, tokenize } from './util';
+
+
+export const isTestPath = (p: string): boolean =>
+  /(^|\/)(tests?|__tests__|specs?|e2e|cypress)\//.test(p) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(p) || /(^|\/)test_[^/]*\.py$|_test\.py$|(^|\/)conftest\.py$/.test(p);
+
+/** "foo.test.tsx", "test_foo.py", "foo_test.py", "foo.spec.ts" and "foo.ts" all share the key "foo". */
+export const stemKey = (p: string): string =>
+  p
+    .split('/')
+    .pop()!
+    .replace(/\.[^.]+$/, '')
+    .replace(/\.(test|spec)$/, '')
+    .replace(/^test_/, '')
+    .replace(/_test$/, '')
+    .toLowerCase();
+
+const DIR_NOISE = new Set(['src', 'tests', 'test', '__tests__', 'unit_tests', 'integration_tests', 'spec', 'specs', 'unit', 'e2e', 'lib', 'app']);
+const dirSegments = (p: string): Set<string> => new Set(p.split('/').slice(0, -1).filter((d) => !DIR_NOISE.has(d)));
+
+/** Corpus statistics are kept per file family so one family's vocabulary never skews another's word rarity. */
+const groupOf = (p: string): string => {
+  const ext = p.split('.').pop()!;
+  return ext === 'py' || ext === 'pyi' ? 'py' : ext === 'html' ? 'html' : ext === 'scss' ? 'style' : ext === 'json' || ext === 'yaml' || ext === 'yml' ? 'cfg' : ext === 'proto' || ext === 'graphql' || ext === 'gql' ? 'idl' : 'js';
+};
 
 export interface Candidate {
   path: string;
@@ -16,6 +42,7 @@ export interface Candidate {
 
 interface DocStats {
   path: string;
+  group: string;
   tf: Map<string, number>;
   len: number;
 }
@@ -25,6 +52,10 @@ export class SearchIndex {
   private docs: DocStats[] = [];
   private df = new Map<string, number>();
   private avgLen = 1;
+  private stems = new Map<string, string[]>();
+  private gdf = new Map<string, Map<string, number>>();
+  private gn = new Map<string, number>();
+  private gAvg = new Map<string, number>();
   private importers = new Map<string, string[]>();
   private key = '';
 
@@ -43,8 +74,13 @@ export class SearchIndex {
     this.key = key;
     this.docs = [];
     this.df.clear();
+    this.stems.clear();
+    this.gdf.clear();
+    this.gn.clear();
+    this.gAvg.clear();
     this.importers.clear();
     let total = 0;
+    const gTotal = new Map<string, number>();
     for (const p of this.view.allPaths()) {
       const e = this.view.resolve(p);
       if (!e) {
@@ -61,7 +97,17 @@ export class SearchIndex {
       const toks = tokenize(text);
       toks.forEach((t) => tf.set(t, (tf.get(t) ?? 0) + 1));
       tf.forEach((_, t) => this.df.set(t, (this.df.get(t) ?? 0) + 1));
-      this.docs.push({ path: p, tf, len: toks.length });
+      const g = groupOf(p);
+      const gm = this.gdf.get(g) ?? new Map<string, number>();
+      tf.forEach((_, t) => gm.set(t, (gm.get(t) ?? 0) + 1));
+      this.gdf.set(g, gm);
+      this.gn.set(g, (this.gn.get(g) ?? 0) + 1);
+      gTotal.set(g, (gTotal.get(g) ?? 0) + toks.length);
+      const sk = stemKey(p);
+      const sl = this.stems.get(sk) ?? [];
+      sl.push(p);
+      this.stems.set(sk, sl);
+      this.docs.push({ path: p, group: g, tf, len: toks.length });
       total += toks.length;
       for (const imp of e.record.imports) {
         const arr = this.importers.get(imp) ?? [];
@@ -70,28 +116,32 @@ export class SearchIndex {
       }
     }
     this.avgLen = this.docs.length ? total / this.docs.length : 1;
+    gTotal.forEach((t, g) => this.gAvg.set(g, t / (this.gn.get(g) ?? 1)));
   }
 
   get size(): number {
     return this.docs.length;
   }
 
-  bm25(query: string[]): Map<string, number> {
+  bm25(query: string[], weights?: Map<string, number>): Map<string, number> {
     const k1 = 1.4;
     const b = 0.75;
-    const n = this.docs.length;
     const scores = new Map<string, number>();
     const q = [...new Set(query)];
     for (const d of this.docs) {
       let s = 0;
+      // Statistics are kept per language so a big Python corpus cannot change how rare a TypeScript word looks (and vice versa).
+      const dfMap = this.gdf.get(d.group)!;
+      const nn = this.gn.get(d.group)!;
+      const avg = this.gAvg.get(d.group)!;
       for (const t of q) {
         const f = d.tf.get(t);
         if (!f) {
           continue;
         }
-        const df = this.df.get(t) ?? 0;
-        const idf = Math.log(1 + (n - df + 0.5) / (df + 0.5));
-        s += (idf * (f * (k1 + 1))) / (f + k1 * (1 - b + (b * d.len) / this.avgLen));
+        const df = dfMap.get(t) ?? 0;
+        const idf = Math.log(1 + (nn - df + 0.5) / (df + 0.5));
+        s += (weights?.get(t) ?? 1) * ((idf * (f * (k1 + 1))) / (f + k1 * (1 - b + (b * d.len) / avg)));
       }
       if (s > 0) {
         scores.set(d.path, s);
@@ -100,14 +150,55 @@ export class SearchIndex {
     return scores;
   }
 
+  /**
+   * The test files for a source file, or the source files for a test file, matched by name and
+   * then by how many directory names they share (so utils.ts pairs with its own utils.test.ts).
+   */
+  pairsOf(p: string, max = 2): string[] {
+    const isTest = isTestPath(p);
+    const mine = dirSegments(p);
+    const cands = (this.stems.get(stemKey(p)) ?? []).filter((q) => q !== p && isTestPath(q) !== isTest && groupOf(q) === groupOf(p));
+    const scored = cands.map((q) => ({ q, sim: [...dirSegments(q)].filter((d) => mine.has(d)).length }));
+    // A name shared by many files (utils, index, types) must also share directories to count as a pair.
+    const need = cands.length > 1 ? 1 : 0;
+    return scored
+      .filter((x) => x.sim >= need)
+      .sort((a, b) => b.sim - a.sim || a.q.localeCompare(b.q))
+      .slice(0, max)
+      .map((x) => x.q);
+  }
+
+  /** Share of the given distinct words that appear in this file's indexed text. */
+  coverage(p: string, words: string[]): number {
+    const d = this.docs.find((x) => x.path === p);
+    if (!d || !words.length) {
+      return 0;
+    }
+    return words.filter((w) => d.tf.has(w)).length / words.length;
+  }
+
   importersOf(p: string): string[] {
     return this.importers.get(p) ?? [];
   }
 }
 
-/** How many files a pack can hold: strongest matches, then neighbours of the top three. */
-export const DEFAULT_MAX_FILES = 8;
-export const DEFAULT_MAX_RELATED = 6;
+/**
+ * How many files a pack can hold: strongest matches, neighbours of the top three, then paired tests.
+ * Skeletons are capped by tier, so a long list costs little more than a short one.
+ */
+export const DEFAULT_MAX_FILES = 32;
+/** Skeleton size caps (tokens): top three matches, the rest of the matches, and related/paired files. */
+export const SKELETON_CAPS = { top: 300, rest: 100, related: 60 } as const;
+export const DEFAULT_MAX_RELATED = 8;
+/** Extra slots for the tests of source files in the pack, and the code under test for test files. */
+export const DEFAULT_MAX_PAIRED = 8;
+/** Second-stage rerank: how many candidates, and how strongly distinct-word coverage counts. */
+export const RERANK_TOP = 50;
+export const RERANK_WEIGHT = 2;
+/** Working-context inputs: weight of words from the uncommitted diff, and boosts (share of the best text score) for modified and open files. */
+export const DIFF_WORD_WEIGHT = 0.4;
+export const WORK_CHANGED_BOOST = 0.25;
+export const WORK_OPEN_BOOST = 0.12;
 
 export interface RetrieveOptions {
   maxFiles?: number;
@@ -116,15 +207,18 @@ export interface RetrieveOptions {
   memoryFilter?: (t: TaskRecord) => boolean;
   /** Extra per-file boosts (e.g. files mentioned in saved notes). */
   extraBoosts?: Map<string, { score: number; because: string }>;
+  /** What the developer is doing now: branch, open and modified files, uncommitted diff words. */
+  work?: WorkContext;
   /** Receives the full ranking (every file with a positive score), for diagnostics. */
   onRanked?: (ranked: [string, { score: number; reasons: string[] }][]) => void;
 }
 
 export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory, task: string, opts: RetrieveOptions = {}): Candidate[] {
   index.ensure();
-  const maxFiles = opts.maxFiles ?? DEFAULT_MAX_FILES;
   const maxRelated = opts.maxRelated ?? DEFAULT_MAX_RELATED;
-  const qTokens = tokenize(task);
+  const work = opts.work;
+  // The branch name often carries the ticket title in words (feature/PYPAY-123-delete-deduction).
+  const qTokens = tokenize(task + ' ' + branchWords(work?.branch ?? ''));
   const taskLower = task.toLowerCase();
   const scores = new Map<string, { score: number; reasons: string[] }>();
   const add = (p: string, s: number, reason: string) => {
@@ -136,8 +230,23 @@ export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory
     scores.set(p, cur);
   };
 
-  for (const [p, s] of index.bm25(qTokens)) {
+  const diffWeights = new Map<string, number>();
+  const diffWords = (work?.diffWords ?? []).filter((w) => !qTokens.includes(w));
+  diffWords.forEach((w) => diffWeights.set(w, DIFF_WORD_WEIGHT));
+  for (const [p, s] of index.bm25([...qTokens, ...diffWords], diffWeights)) {
     add(p, s, 'matches task wording');
+  }
+  if (work?.changedFiles?.length || work?.openFiles?.length) {
+    // Files being edited right now are the strongest hint of where the task lives. The boost is
+    // relative to the best text match so unrelated work in progress cannot take over the pack.
+    const top = Math.max(0, ...[...scores.values()].map((v) => v.score));
+    const base = top || 10;
+    for (const p of work.changedFiles ?? []) {
+      view.resolve(p) && add(p, base * WORK_CHANGED_BOOST, 'you have modified it');
+    }
+    for (const p of work.openFiles ?? []) {
+      view.resolve(p) && add(p, base * WORK_OPEN_BOOST, 'open in your editor');
+    }
   }
 
   const taskIdentifiers = new Set(task.match(/[A-Za-z_$][\w$]*/g) ?? []);
@@ -168,9 +277,24 @@ export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory
     best.rec.touched.forEach((p) => view.resolve(p) && add(p, 10, 'reused from near-identical past task'));
   }
 
+  for (const [p, v] of scores) {
+    if (groupOf(p) !== 'js' && groupOf(p) !== 'py') {
+      v.score *= DATA_SCORE_FACTOR;
+    }
+  }
+  {
+    // Second stage over the best candidates: reward files that match many different task words, not one word many times.
+    const distinct = [...new Set(qTokens)];
+    const top = [...scores.entries()].sort((a, b) => b[1].score - a[1].score).slice(0, RERANK_TOP);
+    for (const [p, v] of top) {
+      v.score *= 1 + RERANK_WEIGHT * index.coverage(p, distinct);
+    }
+  }
   const ranked = [...scores.entries()].sort((a, b) => b[1].score - a[1].score);
   opts.onRanked?.(ranked);
-  const primary: Candidate[] = ranked.slice(0, maxFiles).map(([p, s]) => ({
+  const maxFiles = opts.maxFiles ?? DEFAULT_MAX_FILES;
+  const picked = ranked.slice(0, maxFiles);
+  const primary: Candidate[] = picked.map(([p, s]) => ({
     path: p, score: s.score, reasons: s.reasons, entry: view.resolve(p)!, role: 'primary',
   }));
 
@@ -193,7 +317,23 @@ export function retrieve(index: SearchIndex, view: IndexView, memory: TaskMemory
       }
     }
   }
-  return [...primary, ...related];
+  const paired: Candidate[] = [];
+  {
+    const limit = DEFAULT_MAX_PAIRED;
+    for (const seed of primary) {
+      for (const p of index.pairsOf(seed.path)) {
+        if (chosen.has(p) || paired.length >= limit) {
+          continue;
+        }
+        const e = view.resolve(p);
+        if (e) {
+          chosen.add(p);
+          paired.push({ path: p, score: seed.score * 0.3, reasons: [isTestPath(p) ? `tests ${seed.path}` : `code under test in ${seed.path}`], entry: e, role: 'related' });
+        }
+      }
+    }
+  }
+  return [...primary, ...related, ...paired];
 }
 
 /** Check each candidate against the file on disk so the prompt can flag stale entries. */
@@ -206,6 +346,26 @@ export function markFreshness(root: string, view: IndexView, cands: Candidate[])
       c.entry = { ...c.entry, skeletonFresh: false, contextFresh: false };
     }
   }
+}
+
+/** Keep whole lines of a skeleton until the token cap, then say how much was left out. */
+export function capSkeleton(text: string, maxTokens: number): string {
+  if (estimateTokens(text) <= maxTokens) {
+    return text;
+  }
+  const lines = text.split('\n');
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    const t = estimateTokens(line) + 1;
+    if (used + t > maxTokens && kept.length > 0) {
+      break;
+    }
+    kept.push(line);
+    used += t;
+  }
+  const left = lines.length - kept.length;
+  return left > 0 ? `${kept.join('\n')}\n… (+${left} more lines in the skeleton file)` : text;
 }
 
 export interface BuiltPrompt {
@@ -252,9 +412,13 @@ export function buildPrompt(view: IndexView, task: string, cands: Candidate[], t
   }
   used += noteUsed;
 
+  let rank = 0;
   for (const c of cands) {
     full += c.entry.record.sourceTokens;
-    const skeleton = stripFence(view.readSkeleton(c.entry) ?? '');
+    let skeleton = stripFence(view.readSkeleton(c.entry) ?? '');
+    // Strongest matches get the most room; lower-ranked and related files get a short skeleton so more of them fit.
+    skeleton = capSkeleton(skeleton, c.role === 'primary' ? (rank < 3 ? SKELETON_CAPS.top : SKELETON_CAPS.rest) : SKELETON_CAPS.related);
+    rank++;
     const ctx = view.readContext(c.entry)?.replace(/^# Context:.*\n(_.*_\n)?/, '').trim();
     const flag = c.entry.skeletonFresh ? '' : ' ⚠ stale';
     const why = c.reasons.slice(0, 2).join('; ');

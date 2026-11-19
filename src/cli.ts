@@ -11,7 +11,9 @@ import { Librarian } from './core/librarian';
 import { AnthropicClient, GITHUB_MODELS_URL, LlmClient, OpenAICompatibleClient } from './core/llm';
 import { runMcpServer } from './core/mcpServer';
 import { NoteStore } from './core/notes';
+import * as fs from 'fs';
 import { estimateSavings } from './core/savings';
+import { benchRun, compareRuns, BenchRun } from './core/bench';
 import { changedSince } from './core/sourceFiles';
 import { learnFromGit } from './core/taskMemory';
 
@@ -27,6 +29,8 @@ Commands
   query      Print the context pack for a task
   status     Show index coverage and freshness
   estimate   Estimate token savings by replaying past tasks from git history
+  bench      Deterministic replay for comparing changes (--label --pin --write-pin --out --temporal --max-files)
+  bench-compare  Side-by-side table of bench runs, plus tasks that got worse
   notes      List/search saved notes:  notes [query]
   note       Save a note:              note "<title>" --summary "<text>" [--files a.ts,b.ts] [--layer shared]
   mcp        Run as an MCP server on stdio
@@ -50,6 +54,7 @@ learn options
   --range <a..b> | --commit <sha> | --last <n>
 
 query / estimate options
+  --types <list>            extra file types to index: yaml,yml,json,proto,graphql,gql,html,scss,pyi (default: all but json)
   --budget <tokens>         Token budget (default 6000)
   --commits <n>             (estimate) recent commits to replay (default 50)
   --price <usd>             (estimate) input price per 1M tokens, for an indicative cost
@@ -120,6 +125,9 @@ function makeLlm(flags: Record<string, string | boolean>): LlmClient | undefined
 
 async function main(): Promise<number> {
   const { cmd, flags, rest } = parseArgs(process.argv.slice(2));
+  if (typeof flags.types === 'string') {
+    process.env.LIBRARIAN_TYPES = flags.types; // e.g. --types yaml,html,json (empty = code only)
+  }
   const root = path.resolve(str(flags.root) ?? process.cwd());
   const layer = (str(flags.layer) ?? 'shared') as LayerName;
 
@@ -181,7 +189,7 @@ async function main(): Promise<number> {
         console.error('Usage: librarian query "<task>"');
         return 2;
       }
-      const r = new Librarian(root).findRelevant(task, { budget: Number(str(flags.budget) ?? 6000) });
+      const r = new Librarian(root).findRelevant(task, { budget: Number(str(flags.budget) ?? 6000), work: flags.work === true });
       console.log(r.prompt);
       console.error(`\n~${r.deliveredTokens} tokens (vs ~${r.fullFileTokens} if the ${r.files.length} files were read in full)`);
       return 0;
@@ -198,6 +206,46 @@ async function main(): Promise<number> {
         costPerMillionTokens: str(flags.price) ? Number(str(flags.price)) : undefined,
       });
       console.log(r.markdown);
+      return 0;
+    }
+    case 'bench': {
+      // Deterministic replay for comparing changes: librarian bench --label X [--pin f.json | --write-pin f.json] --out run.json
+      const lib = new Librarian(root);
+      if (lib.view.allPaths().length === 0) {
+        console.error('Building skeletons first (free)...');
+        await runIndex({ root, layer });
+      }
+      const pinFile = str(flags.pin);
+      const refs: string[] | undefined = pinFile ? (JSON.parse(fs.readFileSync(pinFile, 'utf8')) as { refs: string[] }).refs : undefined;
+      const options = {
+        commits: Number(str(flags.commits) ?? 50),
+        budget: Number(str(flags.budget) ?? 6000),
+        temporal: flags.temporal === true,
+        strict: flags.strict === true,
+        maxFiles: str(flags['max-files']) ? Number(str(flags['max-files'])) : undefined,
+        maxRelated: str(flags['max-related']) ? Number(str(flags['max-related'])) : undefined,
+        pinned: !!refs,
+      };
+      const r = await estimateSavings(new Librarian(root), { ...options, refs, includeSessions: false });
+      const run = benchRun(r, str(flags.label) ?? 'run', root, options);
+      const writePin = str(flags['write-pin']);
+      if (writePin) {
+        fs.writeFileSync(writePin, JSON.stringify({ head: run.head, refs: r.cases.map((c) => c.ref).filter(Boolean) }, null, 1) + '\n');
+      }
+      const out = str(flags.out);
+      if (out) {
+        fs.writeFileSync(out, JSON.stringify(run, null, 1) + '\n');
+      }
+      console.log(compareRuns([run]));
+      return 0;
+    }
+    case 'bench-compare': {
+      const runs = rest.map((f) => JSON.parse(fs.readFileSync(f, 'utf8')) as BenchRun);
+      if (runs.length < 1) {
+        console.error('Usage: librarian bench-compare <reference.json> [other.json ...]');
+        return 2;
+      }
+      console.log(compareRuns(runs));
       return 0;
     }
     case 'notes': {
